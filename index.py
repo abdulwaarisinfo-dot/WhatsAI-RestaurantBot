@@ -24,9 +24,10 @@ from pymongo import MongoClient, DESCENDING
 from bson import ObjectId
 from dotenv import load_dotenv
 from langdetect import detect, DetectorFactory
-import certifi, os, re, logging, random, httpx, asyncio, json
+import certifi, os, re, logging, random, httpx, asyncio, json, time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from collections import defaultdict
 
 # ============================================================
 # INITIAL SETUP
@@ -42,6 +43,20 @@ PRODUCTS_DATA: List[Dict[str, Any]] = []
 
 # In-memory session store: { phone_number: SessionDict }
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+# ── FIX #2: In-memory rate limiter ──────────────────────────
+_rate_store: Dict[str, list] = defaultdict(list)
+RATE_LIMIT_PER_MINUTE = 10  # max messages per user per minute
+
+def _is_rate_limited(user_id: str) -> bool:
+    now = time.time()
+    timestamps = [t for t in _rate_store[user_id] if now - t < 60]
+    _rate_store[user_id] = timestamps
+    if len(timestamps) >= RATE_LIMIT_PER_MINUTE:
+        return True
+    _rate_store[user_id].append(now)
+    return False
+# ────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="WhatsApp AI Restaurant Bot v7.0",
@@ -72,7 +87,9 @@ VERIFY_TOKEN      = os.getenv("VERIFY_TOKEN", "my_verify_token")
 SECRET_PASSWORD   = os.getenv("SECRET_PASSWORD", "admin")
 CRM_USERNAME      = os.getenv("USER_NAME", "admin")
 
-WHATSAPP_API_URL = f"https://graph.facebook.com/v19.0/{WHATSAPP_PHONE_ID}/messages"
+# ── FIX #4: Updated to Graph API v22.0 ──────────────────────
+WHATSAPP_API_URL = f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_ID}/messages"
+# ────────────────────────────────────────────────────────────
 
 # ============================================================
 # DATABASE CONNECTION
@@ -973,6 +990,10 @@ async def verify_webhook(
 ):
     if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
         return PlainTextResponse(hub_challenge)
+    # ── FIX #3: Return 200 on bare health-check (no params) ──
+    if hub_mode is None:
+        return PlainTextResponse("Webhook active", status_code=200)
+    # ─────────────────────────────────────────────────────────
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
@@ -990,6 +1011,12 @@ async def receive_message(request: Request):
         msg      = messages[0]
         from_num = msg.get("from", "")
         msg_type = msg.get("type", "text")
+
+        # ── FIX #2: Rate limit check ─────────────────────────
+        if _is_rate_limited(from_num):
+            logger.warning(f"Rate limited: {from_num}")
+            return JSONResponse({"status": "rate_limited"})
+        # ─────────────────────────────────────────────────────
 
         # Interactive button / list replies
         if msg_type == "interactive":
