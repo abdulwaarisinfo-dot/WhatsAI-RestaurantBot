@@ -88,7 +88,7 @@ SECRET_PASSWORD   = os.getenv("SECRET_PASSWORD", "admin")
 CRM_USERNAME      = os.getenv("USER_NAME", "admin")
 
 # ── FIX #4: Updated to Graph API v22.0 ──────────────────────
-WHATSAPP_API_URL = f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_ID}/messages"
+WHATSAPP_API_URL = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
 # ────────────────────────────────────────────────────────────
 
 # ============================================================
