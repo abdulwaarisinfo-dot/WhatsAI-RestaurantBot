@@ -1,21 +1,13 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v7.0)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v7.1-fixed)
 ==============================================================
-v7.0 Upgrades over v6.0:
-  ✅ CART RESET after address → order confirmed (clean slate per order)
-  ✅ "new order" intent → hard reset cart + step + pending_order
-  ✅ Address tracked per-user in session (reused on new orders if unchanged)
-  ✅ Orders persisted in MongoDB with full cart snapshot
-  ✅ Full menu pricing display: ALL variants per product (not just first)
-  ✅ Mixed intent handling: "order X and show all prices" → both handled
-  ✅ Multi-item order: "1kg karahi + 2 burgers + 3 pepsi" fully supported
-  ✅ Session continuity: step tracking never lost mid-flow
-  ✅ ZERO hardcoded prices — 100% database-driven
-  ✅ Analytics: size, spice, extras, language, cart additions tracked
-  ✅ Admin CRM API fully compatible
-  ✅ Order status webhook → WhatsApp notification
-  ✅ v7.1: Language-consistent responses — no more mixed-language replies
-  ✅ v7.1: Smart input normalization — .strip()/.lower()/.title() throughout
+v7.1-fixed patches over v7.1:
+  ✅ FIX: Size matching now case-insensitive on BOTH sides (DB + user input)
+  ✅ FIX: _normalize_size handles "half plate", "full plate", "family pack" etc.
+  ✅ FIX: Language NOT re-detected for short button replies (<= 20 chars)
+  ✅ FIX: Session language preserved — never overwritten by button/emoji text
+  ✅ FIX: "order new" / "naya order" / "order again" all trigger new-order reset
+  ✅ FIX: Interactive button replies use existing session lang, not re-detected
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -61,8 +53,8 @@ def _is_rate_limited(user_id: str) -> bool:
 # ────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v7.0",
-    version="7.0",
+    title="WhatsApp AI Restaurant Bot v7.1-fixed",
+    version="7.1-fixed",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -144,9 +136,13 @@ def _parse_json_field(value, fallback=None):
 def _normalize_size(raw: str) -> str:
     """
     Normalize user size input → DB format.
+    Case-insensitive. Handles plate sizes, weight, volume, t-shirt sizes.
       'half kg' → '0.5kg'  |  '250g' → '0.25kg'  |  'large' → 'Large'
+      'half plate' → 'Half Plate'  |  'full plate' → 'Full Plate'
     """
     s = raw.lower().strip()
+
+    # ── Weight shortcuts ────────────────────────────────────
     s = re.sub(r'half\s*kg?', '0.5kg', s)
     s = re.sub(r'quarter\s*kg?', '0.25kg', s)
     s = re.sub(r'(\d+\.?\d*)\s*gram[s]?', lambda m: f"{float(m.group(1))/1000}kg", s)
@@ -154,29 +150,74 @@ def _normalize_size(raw: str) -> str:
     s = re.sub(r'(\d+\.?\d*)\s*kg',       lambda m: f"{float(m.group(1))}kg",      s)
     s = re.sub(r'(\d+\.?\d*)\s*ml',       lambda m: f"{int(float(m.group(1)))}ml", s)
     s = re.sub(r'(\d+\.?\d*)\s*l\b',      lambda m: f"{float(m.group(1))}l",       s)
+
+    # ── Plate / portion sizes → Title Case (matches typical DB values) ──
+    plate_map = {
+        'half plate':   'Half Plate',
+        'half plat':    'Half Plate',
+        'halfplate':    'Half Plate',
+        'full plate':   'Full Plate',
+        'full plat':    'Full Plate',
+        'fullplate':    'Full Plate',
+        'family pack':  'Family Pack',
+        'familypack':   'Family Pack',
+        'family':       'Family Pack',
+        'quarter plate':'Quarter Plate',
+    }
+    for k, v in plate_map.items():
+        if k in s:
+            return v
+
+    # ── Standard size words ─────────────────────────────────
     size_map = {
-        'small': 'Small', 'medium': 'Medium', 'large': 'Large',
-        'regular': 'Regular', 'xl': 'XL', 'xxl': 'XXL',
-        'full': '1kg', 'half': '0.5kg',
+        'small':   'Small',
+        'medium':  'Medium',
+        'large':   'Large',
+        'regular': 'Regular',
+        'xl':      'XL',
+        'xxl':     'XXL',
+        'full':    '1kg',
+        'half':    '0.5kg',
     }
     for k, v in size_map.items():
         if k in s:
             return v
+
     return s.strip()
 
 
 def _match_variant(variants: List[Dict], size_hint: str) -> Optional[Dict]:
-    """Fuzzy-match user size hint to a DB variant dict."""
+    """
+    Fuzzy-match user size hint to a DB variant dict.
+    FIXED: compares both sides lowercase so 'half plate' matches 'Half Plate'.
+    """
     if not variants or not size_hint:
         return None
-    normalized = _normalize_size(size_hint.strip())
+    normalized = _normalize_size(size_hint.strip()).lower()
+
+    # Exact match (case-insensitive)
     for v in variants:
-        if v.get("size", "").lower() == normalized.lower():
+        if v.get("size", "").lower().strip() == normalized:
             return v
+
+    # Partial / substring match
     for v in variants:
-        vs = v.get("size", "").lower()
-        if normalized.lower() in vs or vs in normalized.lower():
+        vs = v.get("size", "").lower().strip()
+        if normalized in vs or vs in normalized:
             return v
+
+    # Word-overlap match (handles "half plate" vs "Half Plate Pack")
+    norm_words = set(re.findall(r'\w+', normalized))
+    best_score, best_v = 0, None
+    for v in variants:
+        vs_words = set(re.findall(r'\w+', v.get("size", "").lower()))
+        score    = len(norm_words & vs_words)
+        if score > best_score:
+            best_score = score
+            best_v     = v
+    if best_score > 0:
+        return best_v
+
     return None
 
 
@@ -287,21 +328,55 @@ def _track(inc_dict: Dict):
         analytics_col.update_one({"type": "analytics"}, {"$inc": inc_dict})
 
 # ============================================================
-# LANGUAGE DETECTION
+# LANGUAGE DETECTION  ← FIXED
 # ============================================================
 
-def detect_language(text: str) -> str:
+# Button/emoji texts that must never trigger a language change
+_BUTTON_TEXTS = {
+    "view menu 📋", "place order 🛒", "contact us 📞",
+    "✅ confirm order", "➕ add more", "🗑️ clear cart",
+    "✅ order now", "📋 view menu",
+    "order again 🔄", "view menu", "place order", "contact us",
+    "confirm order", "add more", "clear cart", "order now",
+}
+
+
+def detect_language(text: str, session_lang: str = "en") -> str:
+    """
+    Detect language from text.
+    FIXED:
+    - Returns session_lang unchanged if message looks like a button tap
+      (short, no script characters, matches known button labels).
+    - Never lets a short ambiguous string overwrite a previously established lang.
+    """
+    if not text or not text.strip():
+        return session_lang
+
+    stripped = text.strip()
+
+    # Urdu/Arabic script → always Urdu
+    if any("\u0600" <= c <= "\u06FF" for c in stripped):
+        return "ur"
+
+    # Button tap guard: short text (≤ 25 chars) that matches known buttons
+    if len(stripped) <= 25 and stripped.lower() in _BUTTON_TEXTS:
+        return session_lang
+
+    # Very short message (≤ 10 chars) — keep session lang to avoid mis-detection
+    if len(stripped) <= 10:
+        return session_lang
+
     try:
-        if not text or not text.strip():
-            return "en"
-        if any("\u0600" <= c <= "\u06FF" for c in text):
-            return "ur"
-        lang = detect(text)
+        lang = detect(stripped)
         if lang.startswith("ur"): return "ur"
         if lang.startswith("de"): return "de"
+        # langdetect often returns "af", "nl", "da" for short English texts
+        # If none of the above, default to English unless session says otherwise
+        if lang not in ("en", "ur", "de"):
+            return session_lang
         return "en"
     except Exception:
-        return "en"
+        return session_lang
 
 # ============================================================
 # KEYWORD DATABASES
@@ -338,8 +413,16 @@ INTENT_KEYWORDS = {
     "confirm":   ["confirm", "yes", "okay", "ok", "haan", "ہاں", "proceed", "place", "done",
                   "confirm order", "place order"],
     "clear":     ["clear cart", "empty cart", "start over", "restart", "reset cart"],
-    "new_order": ["new order", "naya order", "start new", "nayi order", "fresh order",
-                  "order again", "reorder", "new aaorder", "new ordar", "new aorder"],
+    # FIX: added reversed word orders and more variants
+    "new_order": [
+        "new order", "naya order", "start new", "nayi order", "fresh order",
+        "order again", "reorder", "new aaorder", "new ordar", "new aorder",
+        "order new",          # ← ADDED: handles "order new"
+        "nai order",          # ← ADDED
+        "dobara order",       # ← ADDED: Urdu "order again"
+        "phir order",         # ← ADDED
+        "again order",        # ← ADDED
+    ],
 }
 
 # ============================================================
@@ -418,6 +501,7 @@ QUANTITY_WORDS = {
 SIZE_HINTS = [
     "0.5kg", "1kg", "2kg", "0.25kg", "half kg", "half", "1 kg", "2 kg",
     "500ml", "1.5l", "1.5L", "1l", "small", "medium", "large", "regular", "xl",
+    "half plate", "full plate", "family pack", "quarter plate",  # ← ADDED plate sizes
 ]
 
 
@@ -526,6 +610,7 @@ def parse_multi_item_order(text: str) -> List[Dict]:
             part_no_qty = part
 
         size_hint = ""
+        # Check multi-word size hints first (longest match wins)
         for sh in sorted(SIZE_HINTS, key=len, reverse=True):
             if sh.lower() in part_no_qty.lower():
                 size_hint   = sh
@@ -1071,13 +1156,21 @@ async def receive_message(request: Request):
             logger.warning(f"Rate limited: {from_num}")
             return JSONResponse({"status": "rate_limited"})
 
+        # ── Get session BEFORE language detection ─────────────
+        # IMPORTANT: get session first so we can pass session_lang to detect_language
+        session      = get_user_session(from_num)
+        session_lang = session.get("lang", "en")
+        is_button    = False
+
         # ── Parse incoming message text ───────────────────────
         if msg_type == "interactive":
             interactive = msg.get("interactive", {})
             if interactive.get("type") == "button_reply":
-                msg_text = interactive["button_reply"].get("title", "").strip()
+                msg_text  = interactive["button_reply"].get("title", "").strip()
+                is_button = True
             elif interactive.get("type") == "list_reply":
-                msg_text = interactive["list_reply"].get("title", "").strip()
+                msg_text  = interactive["list_reply"].get("title", "").strip()
+                is_button = True
             else:
                 msg_text = ""
         else:
@@ -1086,9 +1179,18 @@ async def receive_message(request: Request):
         if not msg_text:
             return JSONResponse({"status": "ok"})
 
-        lang    = detect_language(msg_text)
-        session = get_user_session(from_num)
-        session["lang"] = lang
+        # ── Language detection — FIXED ────────────────────────
+        # Button taps use session_lang (never re-detect from button label).
+        # Typed messages: detect but fall back to session_lang on ambiguity.
+        if is_button:
+            lang = session_lang   # preserve user's real language
+        else:
+            lang = detect_language(msg_text, session_lang)
+
+        # Only update session lang if it's a typed message (not button tap)
+        if not is_button:
+            session["lang"] = lang
+
         q    = msg_text.lower().strip()
         step = session.get("step", 0)
 
@@ -1124,7 +1226,7 @@ async def receive_message(request: Request):
         if step == 1:
             po       = session.get("pending_order", {})
             variants = po.get("variants", [])
-            matched  = _match_variant(variants, q)
+            matched  = _match_variant(variants, msg_text)  # use original case for matching
             if not matched and variants:
                 sizes_str = " / ".join(v["size"] for v in variants)
                 size_err = {
@@ -1429,7 +1531,7 @@ async def receive_message(request: Request):
                 product  = first["product"]
                 qty      = first["qty"]
                 variants = product.get("variants", [])
-                matched  = _match_variant(variants, q)
+                matched  = _match_variant(variants, msg_text)  # use original msg_text for case
 
                 if not matched and variants:
                     sizes_str = " / ".join(v["size"] for v in variants)
@@ -2044,7 +2146,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v7.0 started!")
+    logger.info("🚀 Restaurant Bot v7.1-fixed started!")
     logger.info(f"   Products loaded   : {len(PRODUCTS_DATA)}")
     logger.info(f"   WhatsApp connected: {'✅' if WHATSAPP_TOKEN else '❌'}")
     logger.info(f"   MongoDB connected : {'✅' if products_col is not None else '❌'}")
