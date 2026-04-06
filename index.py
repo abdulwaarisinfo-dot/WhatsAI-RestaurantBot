@@ -723,6 +723,26 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]]):
             "title":       item.get("title", "Item")[:24],
             "description": f"{item.get('description', '')[:50]} — {price_str}",
         })
+    body_text = {
+        "en": "Tap an item to order or ask me anything! 🍽️",
+        "ur": "کوئی آئٹم چنیں یا کچھ بھی پوچھیں! 🍽️",
+        "de": "Tippen Sie auf ein Element oder fragen Sie mich! 🍽️",
+    }
+    footer_text = {
+        "en": "Powered by AI Restaurant Bot v7",
+        "ur": "AI ریسٹورنٹ بوٹ v7",
+        "de": "Betrieben von AI Restaurant Bot v7",
+    }
+    button_text = {
+        "en": "View Menu",
+        "ur": "مینو دیکھیں",
+        "de": "Menü anzeigen",
+    }
+    section_title = {
+        "en": "Our Menu",
+        "ur": "ہمارا مینو",
+        "de": "Unsere Speisekarte",
+    }
     payload = {
         "messaging_product": "whatsapp",
         "to":   to,
@@ -905,7 +925,12 @@ async def _handle_full_price_display(from_number: str, q: str, lang: str):
         title    = "Full Menu & Prices"
 
     if not products:
-        await send_whatsapp_text(from_number, "No products found at the moment. Please try again! 🙏")
+        no_prod = {
+            "en": "No products found at the moment. Please try again! 🙏",
+            "ur": "ابھی کوئی آئٹم نہیں ملا۔ دوبارہ کوشش کریں! 🙏",
+            "de": "Keine Produkte gefunden. Bitte erneut versuchen! 🙏",
+        }
+        await send_whatsapp_text(from_number, no_prod.get(lang, no_prod["en"]))
         return
 
     menu_text = _build_full_price_menu(products, emoji, title)
@@ -1069,7 +1094,12 @@ async def receive_message(request: Request):
             matched  = _match_variant(variants, q)
             if not matched and variants:
                 sizes_str = " / ".join(v["size"] for v in variants)
-                await send_whatsapp_text(from_num, f"⚠️ Please choose a valid size: *{sizes_str}*")
+                size_err = {
+                    "en": f"⚠️ Please choose a valid size: *{sizes_str}*",
+                    "ur": f"⚠️ براہ کرم درست سائز چنیں: *{sizes_str}*",
+                    "de": f"⚠️ Bitte eine gültige Größe wählen: *{sizes_str}*",
+                }
+                await send_whatsapp_text(from_num, size_err.get(lang, size_err["en"]))
                 return JSONResponse({"status": "ok"})
 
             po["size"]  = matched["size"]
@@ -1226,12 +1256,22 @@ async def receive_message(request: Request):
 
             elif any(kw in q for kw in ["add more", "more", "aur", "add", "➕"]):
                 session["step"] = 0
-                await send_whatsapp_text(from_num, "Sure! What else would you like to add? 🍽️")
+                add_more = {
+                    "en": "Sure! What else would you like to add? 🍽️",
+                    "ur": "بالکل! اور کیا شامل کرنا ہے؟ 🍽️",
+                    "de": "Natürlich! Was möchten Sie noch hinzufügen? 🍽️",
+                }
+                await send_whatsapp_text(from_num, add_more.get(lang, add_more["en"]))
 
             elif any(kw in q for kw in ["clear", "reset", "cancel", "empty", "🗑️"]):
                 session["cart"] = []
                 session["step"] = 0
-                await send_whatsapp_text(from_num, "🗑️ Cart cleared! What would you like to order?")
+                cleared = {
+                    "en": "🗑️ Cart cleared! What would you like to order?",
+                    "ur": "🗑️ ٹوکری صاف! کیا آرڈر کرنا ہے؟",
+                    "de": "🗑️ Warenkorb geleert! Was möchten Sie bestellen?",
+                }
+                await send_whatsapp_text(from_num, cleared.get(lang, cleared["en"]))
 
             else:
                 cart  = session.get("cart", [])
@@ -1251,14 +1291,23 @@ async def receive_message(request: Request):
             cart_items = session.get("cart", [])
             if not cart_items:
                 session["step"] = 0
-                await send_whatsapp_text(from_num, "🛒 Your cart is empty. What would you like to order?")
+                cart_empty = {
+                    "en": "🛒 Your cart is empty. What would you like to order?",
+                    "ur": "🛒 آپ کی ٹوکری خالی ہے۔ کیا آرڈر کرنا ہے؟",
+                    "de": "🛒 Ihr Warenkorb ist leer. Was möchten Sie bestellen?",
+                }
+                await send_whatsapp_text(from_num, cart_empty.get(lang, cart_empty["en"]))
                 return JSONResponse({"status": "ok"})
 
-            # Handle "same" address reuse
             if q.strip() in ["same", "same address", "same adress", "same add"]:
                 address = session.get("last_address")
                 if not address:
-                    await send_whatsapp_text(from_num, "⚠️ No previous address found. Please type your full address.")
+                    no_addr = {
+                        "en": "⚠️ No previous address found. Please type your full address.",
+                        "ur": "⚠️ پرانا پتہ نہیں ملا۔ براہ کرم اپنا مکمل پتہ لکھیں۔",
+                        "de": "⚠️ Keine frühere Adresse gefunden. Bitte vollständige Adresse eingeben.",
+                    }
+                    await send_whatsapp_text(from_num, no_addr.get(lang, no_addr["en"]))
                     return JSONResponse({"status": "ok"})
             else:
                 address = extract_address(msg_text) or msg_text.strip()
@@ -1272,7 +1321,12 @@ async def receive_message(request: Request):
             reset_cart_only(session)
 
             if order_id == "db_error":
-                await send_whatsapp_text(from_num, "⚠️ Sorry, issue placing order. Please try again.")
+                db_err = {
+                    "en": "⚠️ Sorry, issue placing order. Please try again.",
+                    "ur": "⚠️ معذرت، آرڈر دینے میں مسئلہ ہوا۔ دوبارہ کوشش کریں۔",
+                    "de": "⚠️ Entschuldigung, Fehler bei der Bestellung. Bitte erneut versuchen.",
+                }
+                await send_whatsapp_text(from_num, db_err.get(lang, db_err["en"]))
                 return JSONResponse({"status": "ok"})
 
             conf = {
@@ -1316,7 +1370,12 @@ async def receive_message(request: Request):
 
                 if not matched and variants:
                     sizes_str = " / ".join(v["size"] for v in variants)
-                    await send_whatsapp_text(from_num, f"⚠️ Please choose a valid size: *{sizes_str}*")
+                    size_err = {
+                        "en": f"⚠️ Please choose a valid size: *{sizes_str}*",
+                        "ur": f"⚠️ براہ کرم درست سائز چنیں: *{sizes_str}*",
+                        "de": f"⚠️ Bitte eine gültige Größe wählen: *{sizes_str}*",
+                    }
+                    await send_whatsapp_text(from_num, size_err.get(lang, size_err["en"]))
                     return JSONResponse({"status": "ok"})
 
                 if matched:
@@ -1363,14 +1422,24 @@ async def receive_message(request: Request):
                 await send_whatsapp_buttons(from_num, summary, ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                 session["step"] = 5
             else:
-                await send_whatsapp_text(from_num, "🛒 Your cart is empty. What would you like to order?")
+                cart_empty = {
+                    "en": "🛒 Your cart is empty. What would you like to order?",
+                    "ur": "🛒 آپ کی ٹوکری خالی ہے۔ کیا آرڈر کرنا ہے؟",
+                    "de": "🛒 Ihr Warenkorb ist leer. Was möchten Sie bestellen?",
+                }
+                await send_whatsapp_text(from_num, cart_empty.get(lang, cart_empty["en"]))
             return JSONResponse({"status": "ok"})
 
         # ── Clear cart ────────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["clear"]):
             session["cart"] = []
             session["step"] = 0
-            await send_whatsapp_text(from_num, "🗑️ Cart cleared! What would you like to order?")
+            cleared = {
+                "en": "🗑️ Cart cleared! What would you like to order?",
+                "ur": "🗑️ ٹوکری صاف! کیا آرڈر کرنا ہے؟",
+                "de": "🗑️ Warenkorb geleert! Was möchten Sie bestellen?",
+            }
+            await send_whatsapp_text(from_num, cleared.get(lang, cleared["en"]))
             return JSONResponse({"status": "ok"})
 
         # ── Confirm order (catch-all for step=5) ─────
@@ -1427,7 +1496,12 @@ async def receive_message(request: Request):
                 header = {"en": "🍽️ Our Menu", "ur": "🍽️ ہمارا مینو", "de": "🍽️ Unsere Speisekarte"}.get(lang, "🍽️ Our Menu")
                 await send_whatsapp_list(from_num, header, products)
             else:
-                await send_whatsapp_text(from_num, "Menu not available right now. Try again soon! 🙏")
+                no_menu = {
+                    "en": "Menu not available right now. Try again soon! 🙏",
+                    "ur": "ابھی مینو دستیاب نہیں۔ تھوڑی دیر بعد کوشش کریں! 🙏",
+                    "de": "Menü gerade nicht verfügbar. Bitte später versuchen! 🙏",
+                }
+                await send_whatsapp_text(from_num, no_menu.get(lang, no_menu["en"]))
             return JSONResponse({"status": "ok"})
 
         # ── FAQ ───────────────────────────────────────
