@@ -14,6 +14,8 @@ v7.0 Upgrades over v6.0:
   ✅ Analytics: size, spice, extras, language, cart additions tracked
   ✅ Admin CRM API fully compatible
   ✅ Order status webhook → WhatsApp notification
+  ✅ v7.1: Language-consistent responses — no more mixed-language replies
+  ✅ v7.1: Smart input normalization — .strip()/.lower()/.title() throughout
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -44,7 +46,7 @@ PRODUCTS_DATA: List[Dict[str, Any]] = []
 # In-memory session store: { phone_number: SessionDict }
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
-# ── FIX #2: In-memory rate limiter ──────────────────────────
+# ── In-memory rate limiter ───────────────────────────────────
 _rate_store: Dict[str, list] = defaultdict(list)
 RATE_LIMIT_PER_MINUTE = 10  # max messages per user per minute
 
@@ -87,9 +89,7 @@ VERIFY_TOKEN      = os.getenv("VERIFY_TOKEN", "my_verify_token")
 SECRET_PASSWORD   = os.getenv("SECRET_PASSWORD", "admin")
 CRM_USERNAME      = os.getenv("USER_NAME", "admin")
 
-# ── FIX #4: Updated to Graph API v22.0 ──────────────────────
 WHATSAPP_API_URL = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
-# ────────────────────────────────────────────────────────────
 
 # ============================================================
 # DATABASE CONNECTION
@@ -169,7 +169,7 @@ def _match_variant(variants: List[Dict], size_hint: str) -> Optional[Dict]:
     """Fuzzy-match user size hint to a DB variant dict."""
     if not variants or not size_hint:
         return None
-    normalized = _normalize_size(size_hint)
+    normalized = _normalize_size(size_hint.strip())
     for v in variants:
         if v.get("size", "").lower() == normalized.lower():
             return v
@@ -187,23 +187,34 @@ def _recalc_cart(cart_items: List[Dict]) -> float:
     )
 
 
-def _build_cart_summary(items: List[Dict], total: float) -> str:
-    lines = ["🛒 *Your Cart:*\n"]
+def _build_cart_summary(items: List[Dict], total: float, lang: str = "en") -> str:
+    """Build a formatted cart summary in the user's language."""
+    headers = {
+        "en": "🛒 *Your Cart:*\n",
+        "ur": "🛒 *آپ کی ٹوکری:*\n",
+        "de": "🛒 *Ihr Warenkorb:*\n",
+    }
+    lines = [headers.get(lang, headers["en"])]
     for item in items:
-        name    = item.get("title", "Item")
-        size    = item.get("size", "")
-        qty     = item.get("quantity", 1)
-        price   = (item.get("base_price", 0) + item.get("extras_price", 0)) * qty
-        extras  = ", ".join(item.get("extras", []))
-        spice   = item.get("spice", "")
-        line    = f"• *{name}*"
-        if size:   line += f" ({size})"
+        name   = item.get("title", "Item").strip().title()
+        size   = item.get("size", "").strip()
+        qty    = item.get("quantity", 1)
+        price  = (item.get("base_price", 0) + item.get("extras_price", 0)) * qty
+        extras = ", ".join(e.strip().title() for e in item.get("extras", []))
+        spice  = item.get("spice", "").strip().title()
+        line   = f"• *{name}*"
+        if size:    line += f" ({size})"
         if qty > 1: line += f" ×{qty}"
         line += f" — PKR {int(price)}"
-        if extras: line += f"\n  ➕ Extras: {extras}"
-        if spice:  line += f"\n  🌶️ Spice: {spice}"
+        if extras:  line += f"\n  ➕ Extras: {extras}"
+        if spice:   line += f"\n  🌶️ Spice: {spice}"
         lines.append(line)
-    lines.append(f"\n💰 *Total: PKR {int(total)}*")
+    totals = {
+        "en": f"\n💰 *Total: PKR {int(total)}*",
+        "ur": f"\n💰 *کل: PKR {int(total)}*",
+        "de": f"\n💰 *Gesamt: PKR {int(total)}*",
+    }
+    lines.append(totals.get(lang, totals["en"]))
     return "\n".join(lines)
 
 
@@ -214,7 +225,7 @@ def _build_full_price_menu(products: List[Dict], category_emoji: str = "🍽️"
     """
     lines = [f"{category_emoji} *{title}*\n"]
     for product in products:
-        lines.append(f"• *{product.get('title', 'Item')}*")
+        lines.append(f"• *{product.get('title', 'Item').strip().title()}*")
         variants = product.get("variants", [])
         if variants:
             for v in variants:
@@ -509,15 +520,15 @@ def parse_multi_item_order(text: str) -> List[Dict]:
             part, re.IGNORECASE
         )
         if qty_match:
-            qty            = _extract_quantity(qty_match.group(1))
-            part_no_qty    = part[qty_match.end():].strip()
+            qty         = _extract_quantity(qty_match.group(1))
+            part_no_qty = part[qty_match.end():].strip()
         else:
             part_no_qty = part
 
         size_hint = ""
         for sh in sorted(SIZE_HINTS, key=len, reverse=True):
             if sh.lower() in part_no_qty.lower():
-                size_hint  = sh
+                size_hint   = sh
                 part_no_qty = re.sub(re.escape(sh), "", part_no_qty, flags=re.IGNORECASE).strip()
                 break
 
@@ -541,6 +552,8 @@ def parse_multi_item_order(text: str) -> List[Dict]:
 
 def build_cart_item(product: Dict, size: str, spice: str, extras: List[str], quantity: int) -> Dict:
     """Build a cart item with ALL prices from database — never hardcoded."""
+    size            = size.strip() if size else ""
+    spice           = spice.strip().title() if spice else ""
     variants        = product.get("variants", [])
     matched_variant = _match_variant(variants, size) if size else (variants[0] if variants else None)
 
@@ -552,16 +565,18 @@ def build_cart_item(product: Dict, size: str, spice: str, extras: List[str], qua
         final_size = variants[0]["size"] if variants else size
 
     extras_options = product.get("extras", [])
-    extras_price   = sum(e["price"] for e in extras_options if e["name"] in extras)
+    extras_clean   = [e.strip().title() for e in extras]
+    extras_price   = sum(e["price"] for e in extras_options if e["name"].strip().title() in extras_clean
+                         or e["name"] in extras)
 
     return {
         "product_id":       str(product.get("_id", "")),
-        "title":            product.get("title", "Item"),
-        "category":         product.get("category", ""),
+        "title":            product.get("title", "Item").strip().title(),
+        "category":         product.get("category", "").strip().lower(),
         "size":             final_size,
         "quantity":         quantity,
         "spice":            spice,
-        "extras":           extras,
+        "extras":           extras_clean,
         "base_price":       base_price,
         "extras_price":     extras_price,
         "total_item_price": (base_price + extras_price) * quantity,
@@ -583,7 +598,7 @@ def create_order_from_cart(user_id: str, cart_items: List[Dict], address: str) -
         "dish":       cart_items[0]["title"] if cart_items else "Order",
         "quantity":   sum(i["quantity"] for i in cart_items),
         "total_price": total,
-        "address":    address,
+        "address":    address.strip(),
         "status":     "Pending",
         "timestamp":  datetime.utcnow().isoformat(),
         "customization": {
@@ -617,10 +632,10 @@ def create_order_from_session(user_id: str, session: Dict, address: str) -> str:
     if not items:
         items = [{
             "product_id":       po.get("product_id", ""),
-            "title":            po.get("dish", "Item"),
-            "size":             po.get("size", ""),
-            "spice":            po.get("spice", ""),
-            "extras":           po.get("extras", []),
+            "title":            po.get("dish", "Item").strip().title(),
+            "size":             po.get("size", "").strip(),
+            "spice":            po.get("spice", "").strip().title(),
+            "extras":           [e.strip().title() for e in po.get("extras", [])],
             "quantity":         po.get("qty", 1),
             "base_price":       po.get("price", 0),
             "extras_price":     0,
@@ -634,7 +649,7 @@ def create_order_from_session(user_id: str, session: Dict, address: str) -> str:
 
 def get_faq_response(query: str, lang: str) -> Optional[str]:
     faq = BOT_DATA.get("faq", {})
-    q   = query.lower()
+    q   = query.lower().strip()
     mapping = {
         "delivery": ["deliver", "ship", "ارسال", "versand", "kab ayega", "delivery time"],
         "return":   ["return", "refund", "واپسی", "rückgabe", "exchange", "cancel"],
@@ -711,7 +726,7 @@ async def send_whatsapp_text(to: str, body: str):
             logger.error(f"WhatsApp send failed: {e}")
 
 
-async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]]):
+async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], lang: str = "en"):
     if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
         return
     rows = []
@@ -720,9 +735,10 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]]):
         price_str = f"PKR {variants[0]['price']}" if variants else f"PKR {item.get('price', '')}"
         rows.append({
             "id":          f"item_{i}",
-            "title":       item.get("title", "Item")[:24],
-            "description": f"{item.get('description', '')[:50]} — {price_str}",
+            "title":       item.get("title", "Item").strip().title()[:24],
+            "description": f"{item.get('description', '').strip()[:50]} — {price_str}",
         })
+
     body_text = {
         "en": "Tap an item to order or ask me anything! 🍽️",
         "ur": "کوئی آئٹم چنیں یا کچھ بھی پوچھیں! 🍽️",
@@ -743,6 +759,7 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]]):
         "ur": "ہمارا مینو",
         "de": "Unsere Speisekarte",
     }
+
     payload = {
         "messaging_product": "whatsapp",
         "to":   to,
@@ -750,11 +767,11 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]]):
         "interactive": {
             "type":   "list",
             "header": {"type": "text", "text": header[:60]},
-            "body":   {"text": "Tap an item to order or ask me anything! 🍽️"},
-            "footer": {"text": "Powered by AI Restaurant Bot v7"},
+            "body":   {"text": body_text.get(lang, body_text["en"])},
+            "footer": {"text": footer_text.get(lang, footer_text["en"])},
             "action": {
-                "button":   "View Menu",
-                "sections": [{"title": "Our Menu", "rows": rows}],
+                "button":   button_text.get(lang, button_text["en"]),
+                "sections": [{"title": section_title.get(lang, section_title["en"]), "rows": rows}],
             },
         },
     }
@@ -823,10 +840,11 @@ def _detect_category_from_query(q: str) -> Optional[str]:
 async def _ask_size(to: str, product: Dict, lang: str):
     variants  = product.get("variants", [])
     size_list = "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
+    name      = product.get("title", "Item").strip().title()
     msgs = {
-        "en": f"📏 Choose a size for *{product['title']}*:\n{size_list}",
-        "ur": f"📏 *{product['title']}* کا سائز چنیں:\n{size_list}",
-        "de": f"📏 Größe wählen für *{product['title']}*:\n{size_list}",
+        "en": f"📏 Choose a size for *{name}*:\n{size_list}",
+        "ur": f"📏 *{name}* کا سائز چنیں:\n{size_list}",
+        "de": f"📏 Größe wählen für *{name}*:\n{size_list}",
     }
     await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
 
@@ -835,11 +853,12 @@ async def _ask_spice(to: str, product: Dict, lang: str) -> bool:
     spice_levels = product.get("spice_levels", [])
     if not spice_levels:
         return False
-    options = " / ".join(spice_levels)
+    options = " / ".join(s.strip().title() for s in spice_levels)
+    name    = product.get("title", "Item").strip().title()
     msgs = {
-        "en": f"🌶️ Choose spice level for *{product['title']}*:\n  {options}",
-        "ur": f"🌶️ مسالے کی سطح چنیں *{product['title']}* کے لیے:\n  {options}",
-        "de": f"🌶️ Schärfegrad wählen für *{product['title']}*:\n  {options}",
+        "en": f"🌶️ Choose spice level for *{name}*:\n  {options}",
+        "ur": f"🌶️ مسالے کی سطح چنیں *{name}* کے لیے:\n  {options}",
+        "de": f"🌶️ Schärfegrad wählen für *{name}*:\n  {options}",
     }
     await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
     return True
@@ -849,11 +868,12 @@ async def _ask_extras(to: str, product: Dict, lang: str) -> bool:
     extras = product.get("extras", [])
     if not extras:
         return False
-    extras_list = "\n".join(f"  • {e['name']} +PKR {e['price']}" for e in extras)
+    extras_list = "\n".join(f"  • {e['name'].strip().title()} +PKR {e['price']}" for e in extras)
+    name        = product.get("title", "Item").strip().title()
     msgs = {
-        "en": f"➕ Add extras for *{product['title']}*? (type names or 'no')\n{extras_list}",
-        "ur": f"➕ *{product['title']}* کے ساتھ کچھ اضافی؟ (نام لکھیں یا 'no')\n{extras_list}",
-        "de": f"➕ Extras für *{product['title']}*? (Namen tippen oder 'nein')\n{extras_list}",
+        "en": f"➕ Add extras for *{name}*? (type names or 'no')\n{extras_list}",
+        "ur": f"➕ *{name}* کے ساتھ کچھ اضافی؟ (نام لکھیں یا 'no')\n{extras_list}",
+        "de": f"➕ Extras für *{name}*? (Namen tippen oder 'nein')\n{extras_list}",
     }
     await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
     return True
@@ -874,19 +894,20 @@ async def _handle_single_item_order(from_number: str, text: str, lang: str) -> b
     spice_levels   = p.get("spice_levels", [])
     extras_options = p.get("extras", [])
     base_price     = variants[0]["price"] if variants else float(str(p.get("price", 0)).replace(",", "") or 0)
+    dish_name      = p.get("title", "Item").strip().title()
 
     session["pending_order"] = {
-        "product_id":    p.get("_id", ""),
-        "dish":          p.get("title", "Item"),
-        "price":         base_price,
-        "qty":           1,
-        "variants":      variants,
-        "spice_levels":  spice_levels,
+        "product_id":     p.get("_id", ""),
+        "dish":           dish_name,
+        "price":          base_price,
+        "qty":            1,
+        "variants":       variants,
+        "spice_levels":   spice_levels,
         "extras_options": extras_options,
-        "size":          "",
-        "spice":         "",
-        "extras":        [],
-        "product_ref":   p,
+        "size":           "",
+        "spice":          "",
+        "extras":         [],
+        "product_ref":    p,
     }
 
     if variants:
@@ -895,9 +916,9 @@ async def _handle_single_item_order(from_number: str, text: str, lang: str) -> b
     else:
         session["step"] = 4
         msgs = {
-            "en": f"🎉 Great choice!\n🍽️ *{p['title']}* — PKR {int(base_price)}\n\n📍 Share your delivery address:",
-            "ur": f"🎉 بہترین انتخاب!\n🍽️ *{p['title']}* — PKR {int(base_price)}\n\n📍 ڈلیوری کا پتہ دیں:",
-            "de": f"🎉 Tolle Wahl!\n🍽️ *{p['title']}* — PKR {int(base_price)}\n\n📍 Lieferadresse angeben:",
+            "en": f"🎉 Great choice!\n🍽️ *{dish_name}* — PKR {int(base_price)}\n\n📍 Share your delivery address:",
+            "ur": f"🎉 بہترین انتخاب!\n🍽️ *{dish_name}* — PKR {int(base_price)}\n\n📍 ڈلیوری کا پتہ دیں:",
+            "de": f"🎉 Tolle Wahl!\n🍽️ *{dish_name}* — PKR {int(base_price)}\n\n📍 Lieferadresse angeben:",
         }
         await send_whatsapp_text(from_number, msgs.get(lang, msgs["en"]))
     return True
@@ -918,11 +939,21 @@ async def _handle_full_price_display(from_number: str, q: str, lang: str):
             "rice": "🍚", "rolls": "🌯",
         }
         emoji = emoji_map.get(category, "🍽️")
-        title = f"{cat_name} Menu & Prices"
+        title_map = {
+            "en": f"{cat_name} Menu & Prices",
+            "ur": f"{cat_name} مینو اور قیمتیں",
+            "de": f"{cat_name} Menü & Preise",
+        }
+        title = title_map.get(lang, title_map["en"])
     else:
         products = PRODUCTS_DATA[:15]
         emoji    = "🍽️"
-        title    = "Full Menu & Prices"
+        title_map = {
+            "en": "Full Menu & Prices",
+            "ur": "مکمل مینو اور قیمتیں",
+            "de": "Vollständiges Menü & Preise",
+        }
+        title = title_map.get(lang, title_map["en"])
 
     if not products:
         no_prod = {
@@ -967,7 +998,7 @@ async def handle_multi_item_order(from_number: str, text: str, lang: str) -> boo
             missing_info.append({"type": "size", "product": product, "qty": qty})
             continue
 
-        spice       = ""
+        spice        = ""
         spice_levels = product.get("spice_levels", [])
         if spice_levels and session.get("preferred_spice") in spice_levels:
             spice = session["preferred_spice"]
@@ -988,7 +1019,7 @@ async def handle_multi_item_order(from_number: str, text: str, lang: str) -> boo
 
     session["cart"] = cart_items
     total           = _recalc_cart(cart_items)
-    summary         = _build_cart_summary(cart_items, total)
+    summary         = _build_cart_summary(cart_items, total, lang)
 
     confirm_msgs = {
         "en": f"{summary}\n\n👉 Confirm order or add more items?",
@@ -1015,20 +1046,18 @@ async def verify_webhook(
 ):
     if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
         return PlainTextResponse(hub_challenge)
-    # ── FIX #3: Return 200 on bare health-check (no params) ──
     if hub_mode is None:
         return PlainTextResponse("Webhook active", status_code=200)
-    # ─────────────────────────────────────────────────────────
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
 @app.post("/webhook")
 async def receive_message(request: Request):
     try:
-        data    = await request.json()
-        entry   = data.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        value   = changes.get("value", {})
+        data     = await request.json()
+        entry    = data.get("entry", [{}])[0]
+        changes  = entry.get("changes", [{}])[0]
+        value    = changes.get("value", {})
         messages = value.get("messages", [])
         if not messages:
             return JSONResponse({"status": "ok"})
@@ -1037,19 +1066,18 @@ async def receive_message(request: Request):
         from_num = msg.get("from", "")
         msg_type = msg.get("type", "text")
 
-        # ── FIX #2: Rate limit check ─────────────────────────
+        # ── Rate limit check ─────────────────────────────────
         if _is_rate_limited(from_num):
             logger.warning(f"Rate limited: {from_num}")
             return JSONResponse({"status": "rate_limited"})
-        # ─────────────────────────────────────────────────────
 
-        # Interactive button / list replies
+        # ── Parse incoming message text ───────────────────────
         if msg_type == "interactive":
             interactive = msg.get("interactive", {})
             if interactive.get("type") == "button_reply":
-                msg_text = interactive["button_reply"].get("title", "")
+                msg_text = interactive["button_reply"].get("title", "").strip()
             elif interactive.get("type") == "list_reply":
-                msg_text = interactive["list_reply"].get("title", "")
+                msg_text = interactive["list_reply"].get("title", "").strip()
             else:
                 msg_text = ""
         else:
@@ -1066,13 +1094,18 @@ async def receive_message(request: Request):
 
         _track({"total_searches": 1, f"supported_languages.{lang}": 1})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # PRIORITY 0 — "new order" → reset cart immediately
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if any(kw in q for kw in INTENT_KEYWORDS["new_order"]):
             reset_for_new_order(session)
             last_addr = session.get("last_address")
-            addr_hint = f"\n📍 Last address: _{last_addr}_\n(type 'same' to reuse)" if last_addr else ""
+            addr_hint_map = {
+                "en": f"\n📍 Last address: _{last_addr}_\n(type 'same' to reuse)" if last_addr else "",
+                "ur": f"\n📍 پرانا پتہ: _{last_addr}_\n('same' لکھیں دوبارہ استعمال کے لیے)" if last_addr else "",
+                "de": f"\n📍 Letzte Adresse: _{last_addr}_\n('same' eingeben zum Wiederverwenden)" if last_addr else "",
+            }
+            addr_hint = addr_hint_map.get(lang, addr_hint_map["en"])
             new_order_msg = {
                 "en": f"🆕 Starting a fresh order! Your previous order has been saved.\n{addr_hint}\n\nWhat would you like to order? 🍽️",
                 "ur": f"🆕 نیا آرڈر شروع! پرانا آرڈر محفوظ ہوگیا۔\n{addr_hint}\n\nکیا آرڈر کرنا ہے؟ 🍽️",
@@ -1085,9 +1118,9 @@ async def receive_message(request: Request):
             )
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 1 — User picks SIZE (single item flow)
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 1:
             po       = session.get("pending_order", {})
             variants = po.get("variants", [])
@@ -1126,16 +1159,19 @@ async def receive_message(request: Request):
                     await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 2 — User picks SPICE
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 2:
-            po           = session.get("pending_order", {})
-            spice_levels = po.get("spice_levels", [])
-            matched_spice = next((s for s in spice_levels if s.lower() in q), spice_levels[0] if spice_levels else "")
-            po["spice"]  = matched_spice
-            update_preferences(from_num, spice=matched_spice)
-            _track({f"spice_preference.{matched_spice}": 1})
+            po            = session.get("pending_order", {})
+            spice_levels  = po.get("spice_levels", [])
+            matched_spice = next(
+                (s for s in spice_levels if s.lower() in q),
+                spice_levels[0] if spice_levels else ""
+            )
+            po["spice"] = matched_spice.strip().title()
+            update_preferences(from_num, spice=po["spice"])
+            _track({f"spice_preference.{po['spice']}": 1})
 
             product_ref = po.get("product_ref", {"title": po.get("dish", ""), "extras": po.get("extras_options", [])})
             has_extras  = await _ask_extras(from_num, product_ref, lang)
@@ -1149,23 +1185,24 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 3 — User picks EXTRAS
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 3:
             po             = session.get("pending_order", {})
             extras_options = po.get("extras_options", [])
             chosen         = []
             if not any(skip in q for skip in ["no", "skip", "nothing", "nahi", "nope", "nein"]):
                 for e in extras_options:
-                    if e["name"].lower() in q:
-                        chosen.append(e["name"])
-                        _track({f"extras_preference.{e['name']}": 1})
+                    if e["name"].lower().strip() in q:
+                        chosen.append(e["name"].strip().title())
+                        _track({f"extras_preference.{e['name'].strip().title()}": 1})
 
-            po["extras"]        = chosen
-            extras_price        = sum(e["price"] for e in extras_options if e["name"] in chosen)
-            po["price"]         = po.get("price", 0) + extras_price
-            session["step"]     = 4
+            po["extras"]    = chosen
+            extras_price    = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen
+                                  or e["name"] in chosen)
+            po["price"]     = po.get("price", 0) + extras_price
+            session["step"] = 4
             ask_addr = {
                 "en": "📍 Please share your full delivery address (house no., street, area, city):",
                 "ur": "📍 براہ کرم مکمل پتہ دیں (مکان نمبر، گلی، علاقہ، شہر):",
@@ -1174,17 +1211,21 @@ async def receive_message(request: Request):
             await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 4 — User provides ADDRESS (single item)
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 4:
             po = session.get("pending_order", {})
 
-            # Handle "same" address reuse
             if q.strip() in ["same", "same address", "same adress", "same add"]:
                 address = session.get("last_address")
                 if not address:
-                    await send_whatsapp_text(from_num, "⚠️ No previous address found. Please type your full address.")
+                    no_addr = {
+                        "en": "⚠️ No previous address found. Please type your full address.",
+                        "ur": "⚠️ پرانا پتہ نہیں ملا۔ براہ کرم اپنا مکمل پتہ لکھیں۔",
+                        "de": "⚠️ Keine frühere Adresse gefunden. Bitte vollständige Adresse eingeben.",
+                    }
+                    await send_whatsapp_text(from_num, no_addr.get(lang, no_addr["en"]))
                     return JSONResponse({"status": "ok"})
             else:
                 address = extract_address(msg_text) or msg_text.strip()
@@ -1197,10 +1238,18 @@ async def receive_message(request: Request):
             reset_cart_only(session)
 
             if order_id == "db_error":
-                await send_whatsapp_text(from_num, "⚠️ Sorry, issue placing order. Please try again later.")
+                db_err = {
+                    "en": "⚠️ Sorry, issue placing your order. Please try again later.",
+                    "ur": "⚠️ معذرت، آرڈر دینے میں مسئلہ ہوا۔ دوبارہ کوشش کریں۔",
+                    "de": "⚠️ Entschuldigung, Fehler bei der Bestellung. Bitte erneut versuchen.",
+                }
+                await send_whatsapp_text(from_num, db_err.get(lang, db_err["en"]))
                 return JSONResponse({"status": "ok"})
 
-            extras_text = ", ".join(po.get("extras", [])) or "None"
+            extras_text = ", ".join(po.get("extras", [])) or {
+                "en": "None", "ur": "کچھ نہیں", "de": "Keine"
+            }.get(lang, "None")
+
             conf = {
                 "en": (
                     f"✅ *Order Confirmed!*\n\n"
@@ -1217,28 +1266,35 @@ async def receive_message(request: Request):
                 "ur": (
                     f"✅ *آرڈر تصدیق ہوگیا!*\n\n"
                     f"🍽️ *{po.get('dish', 'Item')}* | PKR {int(po.get('price', 0))}\n"
+                    f"📏 سائز: {po.get('size', '') or 'N/A'}\n"
+                    f"🌶️ مسالہ: {po.get('spice', '') or 'ڈیفالٹ'}\n"
+                    f"➕ اضافی: {extras_text}\n"
                     f"📍 پتہ: {address}\n"
                     f"🔖 آرڈر نمبر: #{order_id[-6:]}\n\n"
+                    f"⏱️ تخمینی ڈلیوری: 35-45 منٹ\n"
                     f"📲 نیا آرڈر دینے کے لیے *new order* لکھیں۔"
                 ),
                 "de": (
                     f"✅ *Bestellung bestätigt!*\n\n"
                     f"🍽️ *{po.get('dish', 'Item')}* | PKR {int(po.get('price', 0))}\n"
+                    f"📏 Größe: {po.get('size', '') or 'N/A'}\n"
+                    f"🌶️ Schärfe: {po.get('spice', '') or 'Standard'}\n"
+                    f"➕ Extras: {extras_text}\n"
                     f"📍 Adresse: {address}\n"
                     f"🔖 Bestellnr: #{order_id[-6:]}\n\n"
+                    f"⏱️ Voraussichtliche Lieferung: 35-45 Min.\n"
                     f"📲 Tippen Sie *new order* für eine neue Bestellung."
                 ),
             }
             await send_whatsapp_text(from_num, conf.get(lang, conf["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 5 — Cart CONFIRMATION (multi-item)
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 5:
             if any(kw in q for kw in ["confirm", "yes", "okay", "ok", "haan", "proceed", "place", "done", "✅"]):
                 session["step"] = 6
-                # Check for saved address
                 last_addr = session.get("last_address")
                 if last_addr:
                     addr_prompt = {
@@ -1274,19 +1330,24 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, cleared.get(lang, cleared["en"]))
 
             else:
-                cart  = session.get("cart", [])
-                total = _recalc_cart(cart)
-                summary = _build_cart_summary(cart, total)
+                cart    = session.get("cart", [])
+                total   = _recalc_cart(cart)
+                summary = _build_cart_summary(cart, total, lang)
+                recap_prompt = {
+                    "en": f"{summary}\n\n👉 Confirm or add more?",
+                    "ur": f"{summary}\n\n👉 تصدیق کریں یا مزید شامل کریں؟",
+                    "de": f"{summary}\n\n👉 Bestätigen oder mehr hinzufügen?",
+                }
                 await send_whatsapp_buttons(
                     from_num,
-                    f"{summary}\n\n👉 Confirm or add more?",
+                    recap_prompt.get(lang, recap_prompt["en"]),
                     ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"]
                 )
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 6 — ADDRESS for cart order
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 6:
             cart_items = session.get("cart", [])
             if not cart_items:
@@ -1314,7 +1375,7 @@ async def receive_message(request: Request):
 
             order_id = create_order_from_cart(from_num, cart_items, address)
             total    = _recalc_cart(cart_items)
-            summary  = _build_cart_summary(cart_items, total)
+            summary  = _build_cart_summary(cart_items, total, lang)
 
             # ✅ Save address + reset cart (keep preferences)
             session["last_address"] = address
@@ -1322,7 +1383,7 @@ async def receive_message(request: Request):
 
             if order_id == "db_error":
                 db_err = {
-                    "en": "⚠️ Sorry, issue placing order. Please try again.",
+                    "en": "⚠️ Sorry, issue placing your order. Please try again.",
                     "ur": "⚠️ معذرت، آرڈر دینے میں مسئلہ ہوا۔ دوبارہ کوشش کریں۔",
                     "de": "⚠️ Entschuldigung, Fehler bei der Bestellung. Bitte erneut versuchen.",
                 }
@@ -1340,25 +1401,27 @@ async def receive_message(request: Request):
                 ),
                 "ur": (
                     f"✅ *آرڈر تصدیق ہوگیا!*\n\n"
-                    f"💰 کل: PKR {int(total)}\n"
+                    f"{summary}\n\n"
                     f"📍 پتہ: {address}\n"
-                    f"🔖 نمبر: #{order_id[-6:]}\n\n"
+                    f"🔖 نمبر: #{order_id[-6:]}\n"
+                    f"⏱️ تخمینی ڈلیوری: 35-45 منٹ\n\n"
                     f"📲 نیا آرڈر دینے کے لیے *new order* لکھیں۔"
                 ),
                 "de": (
                     f"✅ *Bestellung bestätigt!*\n\n"
-                    f"💰 Gesamt: PKR {int(total)}\n"
+                    f"{summary}\n\n"
                     f"📍 Adresse: {address}\n"
-                    f"🔖 Nr: #{order_id[-6:]}\n\n"
+                    f"🔖 Nr: #{order_id[-6:]}\n"
+                    f"⏱️ Voraussichtliche Lieferung: 35-45 Min.\n\n"
                     f"📲 Tippen Sie *new order* für eine neue Bestellung."
                 ),
             }
             await send_whatsapp_text(from_num, conf.get(lang, conf["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 10 — Multi-item MISSING INFO QUEUE
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         if step == 10:
             missing_queue = session.get("missing_info_queue", [])
             if missing_queue:
@@ -1391,19 +1454,24 @@ async def receive_message(request: Request):
                     session["step"]               = 5
                     cart    = session.get("cart", [])
                     total   = _recalc_cart(cart)
-                    summary = _build_cart_summary(cart, total)
+                    summary = _build_cart_summary(cart, total, lang)
+                    confirm_msgs = {
+                        "en": f"{summary}\n\n👉 Confirm order or add more?",
+                        "ur": f"{summary}\n\n👉 آرڈر تصدیق کریں یا مزید شامل کریں؟",
+                        "de": f"{summary}\n\n👉 Bestätigen oder mehr hinzufügen?",
+                    }
                     await send_whatsapp_buttons(
                         from_num,
-                        f"{summary}\n\n👉 Confirm order or add more?",
+                        confirm_msgs.get(lang, confirm_msgs["en"]),
                         ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"]
                     )
             return JSONResponse({"status": "ok"})
 
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
         # STEP 0 — Normal intent routing
-        # ═══════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════
 
-        # ── Greeting ──────────────────────────────────
+        # ── Greeting ──────────────────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["greeting"]):
             greeting = BOT_DATA.get("initial_message", {}).get(lang, "Welcome! 🍽️ How can I help you?")
             sugs     = get_suggestions(from_num, lang)
@@ -1413,12 +1481,12 @@ async def receive_message(request: Request):
             await send_whatsapp_buttons(from_num, reply, ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"])
             return JSONResponse({"status": "ok"})
 
-        # ── Show cart ─────────────────────────────────
+        # ── Show cart ──────────────────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["cart"]):
             cart = session.get("cart", [])
             if cart:
                 total   = _recalc_cart(cart)
-                summary = _build_cart_summary(cart, total)
+                summary = _build_cart_summary(cart, total, lang)
                 await send_whatsapp_buttons(from_num, summary, ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                 session["step"] = 5
             else:
@@ -1430,7 +1498,7 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, cart_empty.get(lang, cart_empty["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── Clear cart ────────────────────────────────
+        # ── Clear cart ─────────────────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["clear"]):
             session["cart"] = []
             session["step"] = 0
@@ -1442,7 +1510,7 @@ async def receive_message(request: Request):
             await send_whatsapp_text(from_num, cleared.get(lang, cleared["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── Confirm order (catch-all for step=5) ─────
+        # ── Confirm order (catch-all for step=5) ──────────────
         if any(kw in q for kw in INTENT_KEYWORDS["confirm"]) and session.get("cart"):
             session["step"] = 6
             last_addr = session.get("last_address")
@@ -1461,8 +1529,7 @@ async def receive_message(request: Request):
             await send_whatsapp_text(from_num, addr_prompt.get(lang, addr_prompt["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── MIXED INTENT: order + price display ───────
-        # e.g. "I want tikka pizza and show all pizza prices"
+        # ── MIXED INTENT: order + price display ───────────────
         order_intent  = any(kw in q for kw in INTENT_KEYWORDS["order"])
         price_intent  = _detect_price_menu_intent(q)
         menu_intent   = any(kw in q for kw in INTENT_KEYWORDS["menu"])
@@ -1473,11 +1540,10 @@ async def receive_message(request: Request):
         if price_intent:
             _track({"total_searches": 1})
             await _handle_full_price_display(from_num, q, lang)
-            # If there's also an order intent in the same message, continue below
             if not order_intent:
                 return JSONResponse({"status": "ok"})
 
-        # ── Order intent ──────────────────────────────
+        # ── Order intent ───────────────────────────────────────
         if order_intent or is_multi or re.search(r'\d+\s*(?:kg|ml|l\b|g\b)', q):
             _track({"total_cart_additions": 1})
             if is_multi or re.search(r'\d+\s*(?:kg|ml|l\b|g\b)', q):
@@ -1488,13 +1554,17 @@ async def receive_message(request: Request):
             if handled:
                 return JSONResponse({"status": "ok"})
 
-        # ── Menu display ──────────────────────────────
+        # ── Menu display ───────────────────────────────────────
         if menu_intent:
             _track({"total_searches": 1})
             products = filter_products(msg_text) or PRODUCTS_DATA[:8]
             if products:
-                header = {"en": "🍽️ Our Menu", "ur": "🍽️ ہمارا مینو", "de": "🍽️ Unsere Speisekarte"}.get(lang, "🍽️ Our Menu")
-                await send_whatsapp_list(from_num, header, products)
+                header = {
+                    "en": "🍽️ Our Menu",
+                    "ur": "🍽️ ہمارا مینو",
+                    "de": "🍽️ Unsere Speisekarte",
+                }.get(lang, "🍽️ Our Menu")
+                await send_whatsapp_list(from_num, header, products, lang)
             else:
                 no_menu = {
                     "en": "Menu not available right now. Try again soon! 🙏",
@@ -1504,63 +1574,70 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, no_menu.get(lang, no_menu["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── FAQ ───────────────────────────────────────
+        # ── FAQ ────────────────────────────────────────────────
         faq_resp = get_faq_response(msg_text, lang)
         if faq_resp:
             await send_whatsapp_text(from_num, faq_resp)
             return JSONResponse({"status": "ok"})
 
-        # ── Discount ──────────────────────────────────
+        # ── Discount ───────────────────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["discount"]):
             disc = BOT_DATA.get("discount_message", {}).get(lang, BOT_DATA.get("discount_message", {}).get("en"))
             if disc:
                 await send_whatsapp_text(from_num, disc)
                 return JSONResponse({"status": "ok"})
 
-        # ── Order status ──────────────────────────────
+        # ── Order status ───────────────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["status"]) and orders_col:
             latest = orders_col.find_one({"user_id": from_num}, sort=[("timestamp", DESCENDING)])
             if latest:
-                dish_name     = latest.get("dish") or (latest.get("items", [{}])[0].get("title", "Order"))
-                status        = latest.get("status", "Pending")
-                status_emoji  = {"Pending": "⏳", "Accepted": "✅", "Processing": "👨‍🍳", "Delivered": "🚗", "Rejected": "❌"}.get(status, "📦")
+                dish_name    = latest.get("dish") or (latest.get("items", [{}])[0].get("title", "Order"))
+                dish_name    = dish_name.strip().title()
+                status       = latest.get("status", "Pending")
+                status_emoji = {"Pending": "⏳", "Accepted": "✅", "Processing": "👨‍🍳", "Delivered": "🚗", "Rejected": "❌"}.get(status, "📦")
                 st = {
                     "en": f"{status_emoji} Latest order (*{dish_name}*): *{status}*\n🔖 ID: #{str(latest.get('_id', ''))[-6:]}",
-                    "ur": f"{status_emoji} آپ کے آخری آرڈر کی حالت: *{status}*",
-                    "de": f"{status_emoji} Letzter Auftragsstatus: *{status}*",
+                    "ur": f"{status_emoji} آپ کے آخری آرڈر کی حالت: *{status}*\n🔖 نمبر: #{str(latest.get('_id', ''))[-6:]}",
+                    "de": f"{status_emoji} Letzter Auftragsstatus (*{dish_name}*): *{status}*\n🔖 Nr: #{str(latest.get('_id', ''))[-6:]}",
                 }
                 await send_whatsapp_text(from_num, st.get(lang, st["en"]))
             else:
                 no_order = {
                     "en": "No orders found. Place your first order! 🍽️",
-                    "ur": "کوئی آرڈر نہیں ملا۔",
-                    "de": "Keine Bestellungen gefunden.",
+                    "ur": "کوئی آرڈر نہیں ملا۔ پہلا آرڈر دیں! 🍽️",
+                    "de": "Keine Bestellungen gefunden. Geben Sie Ihre erste Bestellung auf! 🍽️",
                 }
                 await send_whatsapp_text(from_num, no_order.get(lang, no_order["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── Product name search (fallback) ────────────
+        # ── Product name search (fallback) ─────────────────────
         matched_product = _find_product_by_query(msg_text)
         if matched_product:
-            variants = matched_product.get("variants", [])
+            product_name = matched_product.get("title", "Item").strip().title()
+            variants     = matched_product.get("variants", [])
             if variants:
                 size_list = "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
                 reply = {
-                    "en": f"🍽️ *{matched_product['title']}*\n\nAvailable sizes:\n{size_list}\n\nWould you like to order?",
-                    "ur": f"🍽️ *{matched_product['title']}*\n\nدستیاب سائز:\n{size_list}\n\nکیا آرڈر کرنا ہے؟",
-                    "de": f"🍽️ *{matched_product['title']}*\n\nVerfügbare Größen:\n{size_list}\n\nMöchten Sie bestellen?",
+                    "en": f"🍽️ *{product_name}*\n\nAvailable sizes:\n{size_list}\n\nWould you like to order?",
+                    "ur": f"🍽️ *{product_name}*\n\nدستیاب سائز:\n{size_list}\n\nکیا آرڈر کرنا ہے؟",
+                    "de": f"🍽️ *{product_name}*\n\nVerfügbare Größen:\n{size_list}\n\nMöchten Sie bestellen?",
                 }
                 await send_whatsapp_buttons(from_num, reply.get(lang, reply["en"]), ["✅ Order Now", "📋 View Menu"])
             else:
                 price_str = f"PKR {matched_product.get('price', 'N/A')}"
+                no_variant_reply = {
+                    "en": f"🍽️ *{product_name}* — {price_str}\n\nWould you like to order?",
+                    "ur": f"🍽️ *{product_name}* — {price_str}\n\nکیا آرڈر کرنا ہے؟",
+                    "de": f"🍽️ *{product_name}* — {price_str}\n\nMöchten Sie bestellen?",
+                }
                 await send_whatsapp_buttons(
                     from_num,
-                    f"🍽️ *{matched_product['title']}* — {price_str}\n\nWould you like to order?",
+                    no_variant_reply.get(lang, no_variant_reply["en"]),
                     ["✅ Order Now", "📋 View Menu"]
                 )
             return JSONResponse({"status": "ok"})
 
-        # ── Generic fallback ──────────────────────────
+        # ── Generic fallback ───────────────────────────────────
         fallback = {
             "en": (
                 "I couldn't understand that 🤔 Try:\n"
@@ -1575,15 +1652,19 @@ async def receive_message(request: Request):
                 "سمجھ نہیں آیا 🤔 کوشش کریں:\n"
                 "• *مینو دکھائیں* — سب آئٹم\n"
                 "• *1 کلو کڑاہی* — آرڈر\n"
+                "• *2 برگر + 3 پیپسی* — ملٹی آئٹم آرڈر\n"
+                "• *پیزا کی قیمتیں* — قیمت کی فہرست\n"
                 "• *آرڈر اسٹیٹس* — ٹریکنگ\n"
                 "• *new order* — نیا آرڈر"
             ),
             "de": (
                 "Nicht verstanden 🤔 Versuchen:\n"
-                "• *Menü anzeigen*\n"
-                "• *1kg Karahi bestellen*\n"
-                "• *Bestellstatus*\n"
-                "• *new order*"
+                "• *Menü anzeigen* — alle Artikel\n"
+                "• *1kg Karahi bestellen* — Bestellung aufgeben\n"
+                "• *2 Burger + 3 Pepsi* — Mehrfachbestellung\n"
+                "• *Alle Pizzapreise* — komplette Preisliste\n"
+                "• *Bestellstatus* — verfolgen\n"
+                "• *new order* — neue Bestellung"
             ),
         }
         await send_whatsapp_text(from_num, fallback.get(lang, fallback["en"]))
@@ -1696,8 +1777,8 @@ async def cart_add(request: Request):
 
     user_id    = body.get("user_id")
     product_id = body.get("product_id")
-    size       = body.get("size", "")
-    spice      = body.get("spice", "")
+    size       = body.get("size", "").strip()
+    spice      = body.get("spice", "").strip()
     extras     = body.get("extras", [])
     quantity   = int(body.get("quantity", 1))
 
@@ -1722,8 +1803,8 @@ async def cart_add(request: Request):
     items    = cart.get("items", [])
     existing = next((i for i in items if i["product_id"] == str(product["_id"]) and i.get("size") == size), None)
     if existing:
-        existing["quantity"]         += quantity
-        existing["total_item_price"]  = (existing["base_price"] + existing["extras_price"]) * existing["quantity"]
+        existing["quantity"]        += quantity
+        existing["total_item_price"] = (existing["base_price"] + existing["extras_price"]) * existing["quantity"]
     else:
         items.append(cart_item)
 
@@ -1747,7 +1828,7 @@ async def cart_remove(request: Request):
 
     user_id    = body.get("user_id")
     product_id = body.get("product_id")
-    size       = body.get("size", "")
+    size       = body.get("size", "").strip()
 
     if carts_col is None:
         return JSONResponse({"message": "Database not connected"}, status_code=500)
@@ -1772,7 +1853,7 @@ async def cart_update(request: Request):
 
     user_id    = body.get("user_id")
     product_id = body.get("product_id")
-    size       = body.get("size", "")
+    size       = body.get("size", "").strip()
     quantity   = int(body.get("quantity", 1))
 
     if carts_col is None:
@@ -1839,6 +1920,7 @@ async def update_order_status(order_id: str, request: Request):
         order = orders_col.find_one({"_id": ObjectId(order_id)})
         if order:
             dish_name  = order.get("dish") or (order.get("items", [{}])[0].get("title", "Order"))
+            dish_name  = dish_name.strip().title()
             status_msg = {
                 "Pending":    f"⏳ Your order *{dish_name}* is pending.",
                 "Accepted":   f"✅ Great news! *{dish_name}* order accepted. Preparing now!",
@@ -1909,19 +1991,19 @@ async def track_click(product_id: str = Form(...)):
 
 @app.post("/track_language")
 async def track_language(language: str = Form(...)):
-    _track({f"supported_languages.{language.lower()}": 1})
+    _track({f"supported_languages.{language.lower().strip()}": 1})
     return {"status": "tracked", "language": language}
 
 
 @app.post("/track_size")
 async def track_size(size: str = Form(...)):
-    _track({f"size_preference.{size}": 1})
+    _track({f"size_preference.{size.strip()}": 1})
     return {"status": "tracked"}
 
 
 @app.post("/track_spice")
 async def track_spice(spice: str = Form(...)):
-    _track({f"spice_preference.{spice}": 1})
+    _track({f"spice_preference.{spice.strip().title()}": 1})
     return {"status": "tracked"}
 
 # ============================================================
@@ -1943,11 +2025,11 @@ async def get_api_data():
             "orders":    orders,
             "analytics": analytics,
             "config": {
-                "faq":                BOT_DATA.get("faq", {}),
-                "initial_message":    BOT_DATA.get("initial_message", {}),
-                "discount_message":   BOT_DATA.get("discount_message", {}),
+                "faq":                 BOT_DATA.get("faq", {}),
+                "initial_message":     BOT_DATA.get("initial_message", {}),
+                "discount_message":    BOT_DATA.get("discount_message", {}),
                 "supported_languages": BOT_DATA.get("supported_languages", ["en", "ur", "de"]),
-                "smart_suggestions":  BOT_DATA.get("smart_suggestions", {}),
+                "smart_suggestions":   BOT_DATA.get("smart_suggestions", {}),
             },
         }
     except Exception as e:
