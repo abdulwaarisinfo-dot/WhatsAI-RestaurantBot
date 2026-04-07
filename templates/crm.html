@@ -221,26 +221,26 @@ tr:hover td{background:var(--bg)}
 
 /* ===================== BUTTONS ===================== */
 .btn{
-  border-radius:var(--radius-sm);padding:8px 16px;font-size:13px;font-weight:600;
-  transition:all .12s;display:inline-flex;align-items:center;gap:5px;
-  letter-spacing:.01em;
+  border-radius:var(--radius-sm);padding:9px 18px;font-size:13px;font-weight:600;
+  transition:all .15s;display:inline-flex;align-items:center;gap:6px;
+  letter-spacing:.01em;white-space:nowrap;
 }
-.btn-primary{background:var(--accent);color:#fff;box-shadow:var(--shadow)}
-.btn-primary:hover{background:#1f2937}
-.btn-primary:active{transform:scale(.99)}
-.btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--muted);box-shadow:var(--shadow)}
-.btn-outline:hover{border-color:var(--accent);color:var(--text)}
-.btn-sm{padding:5px 11px;font-size:12px}
-.btn-danger{background:#FEF2F2;color:var(--red);border:1px solid #FECACA}
-.btn-danger:hover{background:#FEE2E2}
-.btn-green{background:#F0FDF4;color:var(--green);border:1px solid #BBF7D0}
-.btn-green:hover{background:#DCFCE7}
-.btn-blue{background:#EFF6FF;color:var(--blue);border:1px solid #BFDBFE}
-.btn-blue:hover{background:#DBEAFE}
-.btn-indigo{background:#EDE9FE;color:var(--indigo);border:1px solid #C4B5FD}
-.btn-indigo:hover{background:#DDD6FE}
-.btn-amber{background:#FFFBEB;color:var(--amber);border:1px solid #FDE68A}
-.btn-amber:hover{background:#FEF3C7}
+.btn-primary{background:var(--accent);color:#fff;box-shadow:0 2px 6px rgba(17,24,39,.18)}
+.btn-primary:hover{background:#1f2937;box-shadow:0 4px 12px rgba(17,24,39,.22);transform:translateY(-1px)}
+.btn-primary:active{transform:scale(.98)}
+.btn-outline{background:var(--surface);border:1.5px solid var(--border);color:var(--muted);box-shadow:var(--shadow)}
+.btn-outline:hover{border-color:var(--accent);color:var(--text);background:var(--bg)}
+.btn-sm{padding:6px 13px;font-size:12px}
+.btn-danger{background:#FEF2F2;color:var(--red);border:1.5px solid #FECACA;font-weight:700}
+.btn-danger:hover{background:#FEE2E2;border-color:#FCA5A5;box-shadow:0 2px 8px rgba(220,38,38,.15)}
+.btn-green{background:#F0FDF4;color:#15803D;border:1.5px solid #86EFAC;font-weight:700}
+.btn-green:hover{background:#DCFCE7;border-color:#4ADE80;box-shadow:0 2px 8px rgba(22,163,74,.15)}
+.btn-blue{background:#EFF6FF;color:#1D4ED8;border:1.5px solid #93C5FD;font-weight:700}
+.btn-blue:hover{background:#DBEAFE;border-color:#60A5FA;box-shadow:0 2px 8px rgba(37,99,235,.15)}
+.btn-indigo{background:#EDE9FE;color:#5B21B6;border:1.5px solid #A78BFA;font-weight:700}
+.btn-indigo:hover{background:#DDD6FE;border-color:#7C3AED;box-shadow:0 2px 8px rgba(79,70,229,.15)}
+.btn-amber{background:#FFFBEB;color:#92400E;border:1.5px solid #FCD34D;font-weight:700}
+.btn-amber:hover{background:#FEF3C7;border-color:#F59E0B;box-shadow:0 2px 8px rgba(217,119,6,.15)}
 
 /* ===================== FORMS ===================== */
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -339,7 +339,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 /* ===================== ORDER CARDS ===================== */
 .orders-grid{
   display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(340px,1fr));
+  grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
   gap:16px;
 }
 .order-card{
@@ -391,12 +391,66 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
   font-size:11px;color:var(--muted);margin-bottom:12px;
   display:flex;align-items:flex-start;gap:5px;line-height:1.4;
 }
-.order-card-actions{display:flex;flex-wrap:wrap;gap:6px}
+.order-card-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
 .order-action-btn{
-  border-radius:var(--radius-sm);padding:5px 11px;font-size:11px;font-weight:600;
-  display:inline-flex;align-items:center;gap:4px;transition:all .12s;border:1px solid transparent;cursor:pointer;
+  border-radius:var(--radius-sm);padding:7px 14px;font-size:12px;font-weight:700;
+  display:inline-flex;align-items:center;gap:5px;transition:all .15s;border:1.5px solid transparent;cursor:pointer;
+  letter-spacing:.01em;
 }
 .order-action-btn:disabled{opacity:.45;cursor:not-allowed}
+.order-action-btn.accept{background:#EFF6FF;color:#1D4ED8;border-color:#93C5FD}
+.order-action-btn.accept:hover{background:#DBEAFE;border-color:#60A5FA;box-shadow:0 2px 8px rgba(37,99,235,.18)}
+.order-action-btn.prepare{background:#EDE9FE;color:#5B21B6;border-color:#A78BFA}
+.order-action-btn.prepare:hover{background:#DDD6FE;border-color:#7C3AED;box-shadow:0 2px 8px rgba(79,70,229,.18)}
+.order-action-btn.deliver{background:#F0FDF4;color:#15803D;border-color:#86EFAC}
+.order-action-btn.deliver:hover{background:#DCFCE7;border-color:#4ADE80;box-shadow:0 2px 8px rgba(22,163,74,.18)}
+.order-action-btn.reject{background:#FEF2F2;color:#B91C1C;border-color:#FCA5A5}
+.order-action-btn.reject:hover{background:#FEE2E2;border-color:#F87171;box-shadow:0 2px 8px rgba(220,38,38,.18)}
+.order-action-btn.info{background:#F9FAFB;color:#374151;border-color:#D1D5DB}
+.order-action-btn.info:hover{background:#F3F4F6;border-color:#9CA3AF;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+
+/* ===================== ORDER DETAIL MODAL ===================== */
+#order-detail-modal .modal{width:600px}
+.od-section{margin-bottom:20px}
+.od-section-title{
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:6px;
+}
+.od-section-title::before{content:'';width:3px;height:11px;background:var(--accent2);border-radius:2px;display:inline-block}
+.od-row{display:flex;gap:12px;margin-bottom:8px}
+.od-label{font-size:12px;color:var(--muted);font-weight:500;min-width:100px;flex-shrink:0}
+.od-val{font-size:13px;color:var(--text);font-weight:500;word-break:break-all}
+.od-item-row{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 12px;background:var(--bg);border-radius:var(--radius-sm);
+  border:1px solid var(--border-light);margin-bottom:8px;
+}
+.od-item-qty{
+  font-family:var(--mono);font-size:12px;font-weight:700;
+  color:#fff;background:var(--accent);border-radius:5px;
+  padding:3px 8px;flex-shrink:0;
+}
+.od-item-info{flex:1}
+.od-item-name{font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px}
+.od-item-details{font-size:11px;color:var(--muted);line-height:1.6}
+.od-item-price{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);flex-shrink:0}
+.od-total-box{
+  background:var(--accent);color:#fff;border-radius:var(--radius-sm);
+  padding:12px 16px;display:flex;justify-content:space-between;align-items:center;
+  margin-top:12px;
+}
+.od-total-box span:first-child{font-size:13px;font-weight:600;opacity:.85}
+.od-total-box span:last-child{font-size:18px;font-weight:800;font-family:var(--mono)}
+.od-delivery-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  background:#FFFBEB;border:1px solid #FCD34D;color:#92400E;
+  border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700;
+  margin-top:8px;
+}
+.od-status-change{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;
+  padding:12px;background:var(--bg);border-radius:var(--radius-sm);border:1px solid var(--border-light);
+}
 
 /* ===================== IMAGE UPLOAD ===================== */
 .img-upload-area{
@@ -669,6 +723,31 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         </div>
         <div class="topbar-right">
           <button class="btn btn-primary" onclick="saveBotConfig()">Save Config</button>
+        </div>
+      </div>
+
+      <!-- Delivery Time -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-head">
+          <div class="card-title">🕐 Delivery Time Settings</div>
+          <span style="font-size:11px;color:var(--muted);font-weight:500">Sent to customers on order confirmation</span>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Default Delivery Time</label>
+            <input class="form-input" id="cfg-delivery-time" placeholder="35-45 mins" style="font-weight:600"/>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px">e.g. "30-40 mins", "45-60 mins"</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Delivery Fee (PKR)</label>
+            <input class="form-input" id="cfg-delivery-fee" type="number" placeholder="0" min="0"/>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px">0 = Free delivery</div>
+          </div>
+          <div class="form-group full">
+            <label class="form-label">Per-Category Exceptions (JSON)</label>
+            <textarea class="form-input" id="cfg-delivery-exceptions" rows="3" placeholder='{"karahi": "45-60 mins", "biryani": "30-40 mins"}'></textarea>
+            <div style="font-size:11px;color:var(--muted2);margin-top:4px">Override delivery time for specific categories. Leave empty to use default.</div>
+          </div>
         </div>
       </div>
 
@@ -968,6 +1047,25 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
   </div>
 </div>
 
+<!-- ORDER DETAIL MODAL -->
+<div class="modal-overlay" id="order-detail-modal" onclick="if(event.target===this)closeOrderDetail()">
+  <div class="modal" style="width:600px;max-width:96vw">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div>
+        <div class="modal-title" id="od-modal-title" style="margin-bottom:2px">Order Details</div>
+        <div style="font-size:12px;color:var(--muted)" id="od-modal-sub">Full order information</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="closeOrderDetail()" style="padding:4px 10px;font-size:16px;line-height:1">×</button>
+    </div>
+    <div id="od-modal-body">
+      <!-- rendered by openOrderDetail() -->
+    </div>
+    <div class="modal-footer" id="od-modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="closeOrderDetail()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast"></div>
 
@@ -1196,9 +1294,11 @@ function buildOrderCard(o, isNew){
   const isNewPending = isNew && o.status === 'Pending';
   const cardClass = isNewPending ? 'order-card new-pending blinking' : 'order-card';
 
-  // Items HTML
+  // Items HTML — show only first 2 items, collapse rest
+  const visibleItems = items.slice(0, 2);
+  const hiddenCount = items.length - 2;
   const itemsHtml = items.length
-    ? items.map(it=>{
+    ? visibleItems.map(it=>{
         const meta = [];
         if(it.size)   meta.push('Size: '+it.size);
         if(it.spice)  meta.push('Spice: '+it.spice);
@@ -1211,12 +1311,17 @@ function buildOrderCard(o, isNew){
           </div>
           <div class="order-item-price">PKR ${it.total_item_price||0}</div>
         </div>`;
-      }).join('')
+      }).join('') + (hiddenCount > 0 ? `<div style="font-size:11px;color:var(--muted);padding:4px 10px;font-weight:600">+${hiddenCount} more item${hiddenCount>1?'s':''} — click More Info</div>` : '')
     : `<div style="font-size:12px;color:var(--muted);padding:8px 0">No item details</div>`;
 
   // Address
   const addrHtml = o.address
     ? `<div class="order-addr">📍 <span>${o.address}</span></div>` : '';
+
+  // Delivery time badge
+  const delivTime = o.delivery_time || o.estimated_delivery || null;
+  const delivBadge = delivTime
+    ? `<div class="od-delivery-badge">🕐 Est. ${delivTime}</div>` : '';
 
   // Action buttons based on status flow
   const actions = buildActionButtons(id, o.status);
@@ -1225,11 +1330,15 @@ function buildOrderCard(o, isNew){
     <div class="order-card-top">
       <div>
         <div class="order-id">#${id.slice(-10)}</div>
-        <div style="margin-top:3px"><span class="pill ${o.status}">${o.status}</span>
-          ${isNewPending?'<span style="font-size:10px;color:#A16207;margin-left:6px;font-weight:700">NEW</span>':''}
+        <div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+          <span class="pill ${o.status}">${o.status}</span>
+          ${isNewPending?'<span style="font-size:10px;color:#A16207;font-weight:700;background:#FEF3C7;border-radius:4px;padding:1px 6px">NEW</span>':''}
         </div>
       </div>
-      <div class="order-time">${timeAgo(o.timestamp)}</div>
+      <div style="text-align:right">
+        <div class="order-time">${timeAgo(o.timestamp)}</div>
+        ${o.user_id?`<div style="font-size:10px;color:var(--muted2);margin-top:2px;font-family:var(--mono)">${(o.user_id).slice(-8)}</div>`:''}
+      </div>
     </div>
     <div class="order-items-list">${itemsHtml}</div>
     <div class="order-total-row">
@@ -1237,7 +1346,8 @@ function buildOrderCard(o, isNew){
       <div class="order-total-val">PKR ${o.total_price||0}</div>
     </div>
     ${addrHtml}
-    <div class="order-card-actions">${actions}</div>
+    ${delivBadge}
+    <div class="order-card-actions" style="margin-top:10px">${actions}</div>
   </div>`;
 }
 
@@ -1249,26 +1359,29 @@ function buildActionButtons(id, status){
 
   // Forward flow
   if(status === 'Pending'){
-    html += btn('✓ Accept', 'Accepted', 'btn-blue');
+    html += btn('✓ Accept', 'Accepted', 'accept');
   }
   if(status === 'Accepted'){
-    html += btn('👨‍🍳 Prepare', 'Processing', 'btn-indigo');
+    html += btn('👨‍🍳 Prepare', 'Processing', 'prepare');
   }
   if(status === 'Processing'){
-    html += btn('🚗 Deliver', 'Delivered', 'btn-green');
+    html += btn('🚗 Deliver', 'Delivered', 'deliver');
   }
 
   // Reject available for non-final statuses
   if(status !== 'Delivered' && status !== 'Rejected'){
-    html += btn('✗ Reject', 'Rejected', 'btn-danger');
+    html += btn('✗ Reject', 'Rejected', 'reject');
   }
+
+  // More Information button always shown
+  html += `<button class="order-action-btn info" onclick="openOrderDetail('${id}')">🔍 More Info</button>`;
 
   // Completed states label
   if(status === 'Delivered'){
-    html += `<span style="font-size:11px;color:var(--green);font-weight:600;padding:5px 0">✅ Order Completed</span>`;
+    html += `<span style="font-size:11px;color:var(--green);font-weight:700;padding:5px 0;display:flex;align-items:center;gap:4px">✅ Completed</span>`;
   }
   if(status === 'Rejected'){
-    html += `<span style="font-size:11px;color:var(--red);font-weight:600;padding:5px 0">✗ Order Rejected</span>`;
+    html += `<span style="font-size:11px;color:var(--red);font-weight:700;padding:5px 0;display:flex;align-items:center;gap:4px">✗ Rejected</span>`;
   }
 
   return html;
@@ -1785,6 +1898,14 @@ async function loadBotConfig(){
     document.getElementById('init-msg-ur').value = initMsgData.ur || '';
     document.getElementById('init-msg-de').value = initMsgData.de || '';
 
+    // Delivery time
+    const dt = cfg.delivery_time || {};
+    document.getElementById('cfg-delivery-time').value = (typeof dt === 'string') ? dt : (dt.default || '35-45 mins');
+    document.getElementById('cfg-delivery-fee').value = cfg.delivery_fee || 0;
+    const exceptions = (typeof dt === 'object' && !Array.isArray(dt)) ? {...dt} : {};
+    delete exceptions.default;
+    document.getElementById('cfg-delivery-exceptions').value = Object.keys(exceptions).length ? JSON.stringify(exceptions, null, 2) : '';
+
     renderFaqEditor();
   } catch(e){
     toast('Failed to load bot config','error');
@@ -1835,12 +1956,30 @@ async function saveBotConfig(){
     de: document.getElementById('init-msg-de')?.value || '',
   };
 
+  // Build delivery time payload
+  const delivDefault = document.getElementById('cfg-delivery-time')?.value.trim() || '35-45 mins';
+  const delivFee = parseFloat(document.getElementById('cfg-delivery-fee')?.value) || 0;
+  let delivExceptions = {};
+  try {
+    const raw = document.getElementById('cfg-delivery-exceptions')?.value.trim();
+    if(raw) delivExceptions = JSON.parse(raw);
+  } catch(e){ toast('Invalid JSON in delivery exceptions','error'); return; }
+  const delivPayload = { default: delivDefault, ...delivExceptions };
+
   try{
     // FAQs
     const r1 = await fetch('/api/faqs', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(faqPayload)
     });
     const d1 = await r1.json();
+
+    // Delivery time (try — endpoint may not exist yet)
+    try{
+      await fetch('/api/delivery-time', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ delivery_time: delivPayload, delivery_fee: delivFee })
+      });
+    } catch(e2){ /* endpoint optional */ }
 
     toast(d1.message || 'Bot config saved!');
   } catch(e){
@@ -2037,6 +2176,106 @@ function renderBarChart(containerId, dataObj, unit, color, labelFn){
       </div>
     </div>`;
   }).join('');
+}
+
+// ============================
+// ORDER DETAIL MODAL
+// ============================
+function openOrderDetail(id){
+  const o = allOrders.find(x => x._id === id);
+  if(!o){ toast('Order not found','error'); return; }
+
+  const items = o.items || [];
+  const statusColors = {
+    Pending:'#A16207',Accepted:'#1D4ED8',Processing:'#5B21B6',
+    Delivered:'#15803D',Rejected:'#B91C1C'
+  };
+  const statusBg = {
+    Pending:'#FEF9C3',Accepted:'#DBEAFE',Processing:'#EDE9FE',
+    Delivered:'#DCFCE7',Rejected:'#FEE2E2'
+  };
+
+  // Order items full detail
+  const itemsHtml = items.length
+    ? items.map(it => {
+        const details = [];
+        if(it.size)   details.push(`<span style="background:#EFF6FF;color:#1D4ED8;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">📏 ${it.size}</span>`);
+        if(it.spice)  details.push(`<span style="background:#FFF7ED;color:#C2410C;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">🌶️ ${it.spice}</span>`);
+        if(it.extras && it.extras.length){
+          const extArr = Array.isArray(it.extras) ? it.extras : [it.extras];
+          extArr.forEach(e => details.push(`<span style="background:#F0FDF4;color:#15803D;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">➕ ${e}</span>`));
+        }
+        return `<div class="od-item-row">
+          <div class="od-item-qty">×${it.quantity||1}</div>
+          <div class="od-item-info">
+            <div class="od-item-name">${it.title||'Item'}</div>
+            ${details.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">${details.join('')}</div>` : ''}
+            ${it.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;font-style:italic">Note: ${it.notes}</div>` : ''}
+          </div>
+          <div class="od-item-price">PKR ${it.total_item_price||0}</div>
+        </div>`;
+      }).join('')
+    : `<div style="font-size:13px;color:var(--muted);padding:12px 0">No item details available</div>`;
+
+  // Delivery time
+  const delivTime = o.delivery_time || o.estimated_delivery || '35–45 mins';
+  const delivBadge = `<div class="od-delivery-badge">🕐 Est. ${delivTime}</div>`;
+
+  // Status change buttons
+  let statusBtns = '';
+  const sBtn = (label, s, cls) =>
+    `<button class="order-action-btn ${cls}" onclick="updateOrderStatus('${o._id}','${s}');closeOrderDetail()">${label}</button>`;
+  if(o.status==='Pending')    statusBtns = sBtn('✓ Accept','Accepted','accept') + sBtn('✗ Reject','Rejected','reject');
+  if(o.status==='Accepted')   statusBtns = sBtn('👨‍🍳 Mark Preparing','Processing','prepare') + sBtn('✗ Reject','Rejected','reject');
+  if(o.status==='Processing') statusBtns = sBtn('🚗 Mark Delivered','Delivered','deliver') + sBtn('✗ Reject','Rejected','reject');
+
+  document.getElementById('od-modal-title').textContent = `Order #${o._id.slice(-10)}`;
+  document.getElementById('od-modal-sub').innerHTML = `
+    <span style="background:${statusBg[o.status]||'#F3F4F6'};color:${statusColors[o.status]||'#374151'};border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700">${o.status}</span>
+    &nbsp;·&nbsp; Placed ${timeAgo(o.timestamp)}`;
+
+  document.getElementById('od-modal-body').innerHTML = `
+    <!-- Order Info -->
+    <div class="od-section">
+      <div class="od-section-title">Order Information</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="od-row" style="margin-bottom:0"><div class="od-label">Order ID</div><div class="od-val" style="font-family:var(--mono);font-size:12px">${o._id}</div></div>
+        <div class="od-row" style="margin-bottom:0"><div class="od-label">Placed</div><div class="od-val">${o.timestamp ? new Date(o.timestamp).toLocaleString() : '—'}</div></div>
+        <div class="od-row" style="margin-bottom:0"><div class="od-label">Customer</div><div class="od-val" style="font-family:var(--mono);font-size:12px">${o.user_id||'—'}</div></div>
+        <div class="od-row" style="margin-bottom:0"><div class="od-label">Phone</div><div class="od-val">${o.phone || o.user_phone || '—'}</div></div>
+      </div>
+    </div>
+
+    <!-- Delivery Info -->
+    <div class="od-section">
+      <div class="od-section-title">Delivery Information</div>
+      <div class="od-row"><div class="od-label">Address</div><div class="od-val">${o.address||'Not provided'}</div></div>
+      <div class="od-row"><div class="od-label">Est. Time</div><div class="od-val">${delivBadge}</div></div>
+      ${o.notes ? `<div class="od-row"><div class="od-label">Notes</div><div class="od-val">${o.notes}</div></div>` : ''}
+    </div>
+
+    <!-- Items -->
+    <div class="od-section">
+      <div class="od-section-title">Items Ordered (${items.length})</div>
+      ${itemsHtml}
+      <div class="od-total-box">
+        <span>Order Total</span>
+        <span>PKR ${o.total_price||0}</span>
+      </div>
+    </div>
+
+    <!-- Status Actions -->
+    ${statusBtns ? `<div class="od-section">
+      <div class="od-section-title">Update Status</div>
+      <div class="od-status-change">${statusBtns}</div>
+    </div>` : ''}
+  `;
+
+  document.getElementById('order-detail-modal').classList.add('open');
+}
+
+function closeOrderDetail(){
+  document.getElementById('order-detail-modal').classList.remove('open');
 }
 
 // ============================
