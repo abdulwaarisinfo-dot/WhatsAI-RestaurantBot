@@ -2153,6 +2153,53 @@ async def update_suggestions(request: Request):
     return JSONResponse({"message": "Suggestions updated!", "status": "success"})
 
 # ============================================================
+# DELIVERY TIME API
+# ============================================================
+
+@app.get("/api/delivery-time")
+async def get_delivery_time_api():
+    load_data_realtime()
+    return {
+        "delivery_time":            BOT_DATA.get("delivery_time", "35-45 mins"),
+        "delivery_time_exceptions": BOT_DATA.get("delivery_time_exceptions", {}),
+    }
+
+
+@app.post("/api/delivery-time")
+async def update_delivery_time(request: Request):
+    if meta_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    update_fields: Dict[str, Any] = {}
+
+    if "delivery_time" in body:
+        update_fields["delivery_time"] = str(body["delivery_time"]).strip()
+
+    if "delivery_time_exceptions" in body:
+        exceptions = body["delivery_time_exceptions"]
+        if not isinstance(exceptions, dict):
+            return JSONResponse({"message": "delivery_time_exceptions must be an object"}, status_code=400)
+        update_fields["delivery_time_exceptions"] = {
+            k.lower().strip(): str(v).strip() for k, v in exceptions.items()
+        }
+
+    if not update_fields:
+        return JSONResponse({"message": "No valid fields provided. Use 'delivery_time' and/or 'delivery_time_exceptions'."}, status_code=400)
+
+    meta_col.update_one({"type": "config"}, {"$set": update_fields}, upsert=True)
+    load_data_realtime()
+    return JSONResponse({
+        "message":                  "Delivery time updated!",
+        "status":                   "success",
+        "delivery_time":            BOT_DATA.get("delivery_time", "35-45 mins"),
+        "delivery_time_exceptions": BOT_DATA.get("delivery_time_exceptions", {}),
+    })
+
+# ============================================================
 # ANALYTICS API
 # ============================================================
 
