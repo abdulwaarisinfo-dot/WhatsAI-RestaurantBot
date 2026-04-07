@@ -1,28 +1,26 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v10.0)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v11.0)
 ===============================================================
-v10.0 fixes over v9.0 (all bugs observed in chat log):
+v11.0 changes over v10.0:
 
-  ✅ FIX 1: XL pizza showed ×2 — ordinals "2nd" now always map to qty=1
-             (ordinal = "which item", not "how many")
-  ✅ FIX 2: Extras applied to ALL cart items — extras now applied ONLY
-             to the specific item the user mentioned ("In Small pizza add...")
-  ✅ FIX 3: Single spice word "Spicy" applied same level to ALL sizes in
-             multi-size flow — now each queued item resolved individually,
-             and a single bare spice word is used as a shared fallback ONLY
-             when the user truly gives no per-item differentiation
-  ✅ FIX 4: Typo tolerance for extras — "Cold drinl" now fuzzy-matches
-             "Cold Drink" using difflib SequenceMatcher
-  ✅ FIX 5: Delivery time showing dict instead of string — robust
-             get_delivery_time() always returns a str
-  ✅ FIX 6: "Yes" accepted as delivery address — address validator now
-             requires ≥15 chars OR contains address keywords; short
-             bare words like "Yes" prompt the user to re-enter
-  ✅ FIX 7: Previous cart LOST when "Add More" brings in a new product
-             that enters single-item flow (step 1→2→3→4) — single-item
-             flow now appends to existing cart and routes to step 5/6
-             instead of step 4 when cart already has items
-  ✅ KEEP: All v9.0 fixes 100% preserved
+  ✅ FIX 8: FAQ not loading correctly — load_data_realtime() now performs
+             a dedicated find_one({"type": "config"}) pass and merges its
+             keys with priority, so FAQ keys stored under type="config"
+             are always surfaced properly regardless of doc ordering.
+
+  ✅ NEW: Delivery Charges System — fully MongoDB-driven.
+             Supports:
+               • flat_charge      — always charged (e.g. PKR 50)
+               • free_above       — free delivery when order total ≥ this
+               • per_area         — dict of area_keyword → charge override
+               • free_keywords    — list of address substrings → always free
+             New API endpoints:
+               GET  /api/delivery-charges
+               POST /api/delivery-charges
+             Delivery charge is calculated, displayed in cart summary, and
+             added to every order total at confirmation.
+
+  ✅ KEEP: All v10.0 fixes 100% preserved (FIX 1-7).
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -46,7 +44,7 @@ from difflib import SequenceMatcher
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v10")
+logger = logging.getLogger("RestaurantBot.v11")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -70,8 +68,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v10.0",
-    version="10.0",
+    title="WhatsApp AI Restaurant Bot v11.0",
+    version="11.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -228,7 +226,17 @@ def _recalc_cart(cart_items: List[Dict]) -> float:
     )
 
 
-def _build_cart_summary(items: List[Dict], total: float, lang: str = "en") -> str:
+def _build_cart_summary(
+    items: List[Dict],
+    total: float,
+    lang: str = "en",
+    delivery_charge: float = 0.0,
+    show_delivery: bool = False,
+) -> str:
+    """
+    Build a cart summary string.
+    If show_delivery=True, appends the delivery charge line and grand total.
+    """
     headers = {
         "en": "🛒 *Your Cart:*\n",
         "ur": "🛒 *آپ کی ٹوکری:*\n",
@@ -249,12 +257,36 @@ def _build_cart_summary(items: List[Dict], total: float, lang: str = "en") -> st
         if extras:  line += f"\n  ➕ Extras: {extras}"
         if spice:   line += f"\n  🌶️ Spice: {spice}"
         lines.append(line)
+
     totals = {
-        "en": f"\n💰 *Total: PKR {int(total)}*",
-        "ur": f"\n💰 *کل: PKR {int(total)}*",
-        "de": f"\n💰 *Gesamt: PKR {int(total)}*",
+        "en": f"\n💰 *Subtotal: PKR {int(total)}*",
+        "ur": f"\n💰 *سب ٹوٹل: PKR {int(total)}*",
+        "de": f"\n💰 *Zwischensumme: PKR {int(total)}*",
     }
     lines.append(totals.get(lang, totals["en"]))
+
+    if show_delivery:
+        if delivery_charge > 0:
+            dc_line = {
+                "en": f"🚚 *Delivery: PKR {int(delivery_charge)}*",
+                "ur": f"🚚 *ڈلیوری: PKR {int(delivery_charge)}*",
+                "de": f"🚚 *Lieferung: PKR {int(delivery_charge)}*",
+            }
+        else:
+            dc_line = {
+                "en": "🚚 *Delivery: FREE* 🎉",
+                "ur": "🚚 *ڈلیوری: مفت* 🎉",
+                "de": "🚚 *Lieferung: KOSTENLOS* 🎉",
+            }
+        lines.append(dc_line.get(lang, dc_line["en"]))
+        grand = total + delivery_charge
+        gt_line = {
+            "en": f"💳 *Grand Total: PKR {int(grand)}*",
+            "ur": f"💳 *کل رقم: PKR {int(grand)}*",
+            "de": f"💳 *Gesamtbetrag: PKR {int(grand)}*",
+        }
+        lines.append(gt_line.get(lang, gt_line["en"]))
+
     return "\n".join(lines)
 
 
@@ -275,7 +307,6 @@ def _build_full_price_menu(products: List[Dict], category_emoji: str = "🍽️"
 
 # ── FIX 4: Fuzzy extra matching ────────────────────────────────────────────────
 def _fuzzy_match_extra(query_word: str, extra_name: str, threshold: float = 0.75) -> bool:
-    """Return True if query_word is a close enough match to extra_name."""
     q = query_word.lower().strip()
     e = extra_name.lower().strip()
     if q in e or e in q:
@@ -285,19 +316,13 @@ def _fuzzy_match_extra(query_word: str, extra_name: str, threshold: float = 0.75
 
 
 def _extract_extras_from_text(text: str, extras_options: List[Dict]) -> List[str]:
-    """
-    Extract chosen extras from free text, tolerating typos via fuzzy matching.
-    e.g. "Cold drinl" matches "Cold Drink"
-    """
     q      = text.lower()
     chosen = []
     for e in extras_options:
         name = e["name"].strip()
-        # Exact / substring check first
         if name.lower() in q:
             chosen.append(name.strip().title())
             continue
-        # Fuzzy check — split extra name into words and check each against query tokens
         extra_words = name.lower().split()
         query_words = re.findall(r'\w+', q)
         matched_words = 0
@@ -327,10 +352,6 @@ _SHORT_WORDS = {
 
 
 def _is_valid_address(text: str) -> bool:
-    """
-    Returns True only if the text looks like a real delivery address.
-    Rejects bare single words like 'Yes', 'Ok', etc.
-    """
     stripped = text.strip()
     if stripped.lower() in _SHORT_WORDS:
         return False
@@ -338,10 +359,8 @@ def _is_valid_address(text: str) -> bool:
         return False
     if _ADDRESS_KEYWORDS.search(stripped):
         return True
-    # Allow any reasonably long free-form address (≥15 chars with at least one digit or comma)
     if len(stripped) >= 15 and (any(c.isdigit() for c in stripped) or ',' in stripped):
         return True
-    # Minimum fallback: at least 20 chars and not a known short word
     return len(stripped) >= 20
 
 
@@ -350,12 +369,20 @@ def _is_valid_address(text: str) -> bool:
 # ============================================================
 
 def load_data_realtime():
+    """
+    FIX 8: Two-pass loading.
+      Pass 1 — merge all bot_metadata docs (preserves v10 behavior).
+      Pass 2 — explicitly reload type=="config" doc and overlay its keys
+                with priority, so FAQ, suggestions, delivery settings etc.
+                stored under that doc are always surfaced correctly.
+    """
     global PRODUCTS_DATA, BOT_DATA
     if products_col is None or meta_col is None:
         return
     try:
         PRODUCTS_DATA = [_str_id(p) for p in products_col.find({})]
 
+        # ── Pass 1: merge all docs (original behavior) ────────────────────
         merged: Dict[str, Any] = {}
         for doc in meta_col.find({}):
             _str_id(doc)
@@ -371,13 +398,46 @@ def load_data_realtime():
             "smart_suggestions":        {},
             "delivery_time":            "35-45 mins",
             "delivery_time_exceptions": {},
+            # Delivery charges defaults (overridden from MongoDB)
+            "delivery_charges": {
+                "flat_charge":    0,       # always applied charge (PKR), 0 = free
+                "free_above":     0,       # order total above which delivery is free (0 = never auto-free)
+                "per_area":       {},      # { "area keyword (lowercase)": charge_pkr }
+                "free_keywords":  [],      # list of address substrings that grant free delivery
+            },
         }
         BOT_DATA.update(merged)
 
+        # ── Pass 2: explicit priority load of type=="config" ─────────────
+        config_doc = meta_col.find_one({"type": "config"})
+        if config_doc:
+            _str_id(config_doc)
+            priority_keys = [
+                "faq", "smart_suggestions", "initial_message",
+                "discount_message", "supported_languages",
+                "delivery_time", "delivery_time_exceptions",
+                "delivery_charges",
+            ]
+            for k in priority_keys:
+                if k in config_doc:
+                    BOT_DATA[k] = config_doc[k]
+
+        # ── Ensure delivery_charges is always a properly-shaped dict ──────
+        dc = BOT_DATA.get("delivery_charges", {})
+        if not isinstance(dc, dict):
+            dc = {}
+        BOT_DATA["delivery_charges"] = {
+            "flat_charge":   float(dc.get("flat_charge", 0) or 0),
+            "free_above":    float(dc.get("free_above", 0) or 0),
+            "per_area":      dc.get("per_area", {}) if isinstance(dc.get("per_area"), dict) else {},
+            "free_keywords": dc.get("free_keywords", []) if isinstance(dc.get("free_keywords"), list) else [],
+        }
+
         logger.info(
             f"Data synced | Products: {len(PRODUCTS_DATA)} | "
+            f"FAQ keys: {list(BOT_DATA.get('faq', {}).keys())} | "
             f"Delivery time: {BOT_DATA['delivery_time']} | "
-            f"Languages: {BOT_DATA['supported_languages']}"
+            f"Delivery charges: {BOT_DATA['delivery_charges']}"
         )
     except Exception as e:
         logger.error(f"Data load error: {e}")
@@ -385,11 +445,9 @@ def load_data_realtime():
 
 # ── FIX 5: Delivery time always returns a plain string ──────────────────────
 def get_delivery_time(category: str = "") -> str:
-    """Always returns a plain string, never a dict or other type."""
     exceptions = BOT_DATA.get("delivery_time_exceptions", {})
     default    = BOT_DATA.get("delivery_time", "35-45 mins")
 
-    # Normalise default — guard against accidental dict storage
     if isinstance(default, dict):
         default = default.get("default", "35-45 mins")
     default = str(default).strip() or "35-45 mins"
@@ -402,6 +460,61 @@ def get_delivery_time(category: str = "") -> str:
             return str(val).strip() or default
 
     return default
+
+
+# ============================================================
+# DELIVERY CHARGES ENGINE  (NEW in v11)
+# ============================================================
+
+def calculate_delivery_charge(order_total: float, address: str = "") -> float:
+    """
+    Returns the delivery charge (PKR) for a given order total and address.
+
+    Logic (applied in order of priority):
+      1. If address contains any free_keyword  → 0 (free)
+      2. If order_total >= free_above (and free_above > 0) → 0 (free)
+      3. Check per_area: if any area key is found in address → use that charge
+      4. Fall back to flat_charge
+    """
+    dc = BOT_DATA.get("delivery_charges", {})
+    flat_charge  = float(dc.get("flat_charge", 0) or 0)
+    free_above   = float(dc.get("free_above", 0) or 0)
+    per_area     = dc.get("per_area", {}) if isinstance(dc.get("per_area"), dict) else {}
+    free_keywords = dc.get("free_keywords", []) if isinstance(dc.get("free_keywords"), list) else []
+
+    addr_lower = address.lower()
+
+    # 1. Free-keyword check (highest priority)
+    for kw in free_keywords:
+        if str(kw).lower().strip() in addr_lower:
+            logger.debug(f"Delivery FREE — matched free_keyword '{kw}'")
+            return 0.0
+
+    # 2. Free-above threshold
+    if free_above > 0 and order_total >= free_above:
+        logger.debug(f"Delivery FREE — order_total {order_total} >= free_above {free_above}")
+        return 0.0
+
+    # 3. Per-area overrides
+    for area_key, area_charge in per_area.items():
+        if str(area_key).lower().strip() in addr_lower:
+            logger.debug(f"Delivery PKR {area_charge} — matched per_area '{area_key}'")
+            return float(area_charge)
+
+    # 4. Flat charge fallback
+    logger.debug(f"Delivery PKR {flat_charge} — flat charge applied")
+    return flat_charge
+
+
+def _delivery_charge_info_text(charge: float, lang: str) -> str:
+    """One-line summary of delivery charge for messages."""
+    if charge <= 0:
+        return {"en": "🚚 Free delivery!", "ur": "🚚 مفت ڈلیوری!", "de": "🚚 Kostenlose Lieferung!"}.get(lang, "🚚 Free delivery!")
+    return {
+        "en": f"🚚 Delivery charge: PKR {int(charge)}",
+        "ur": f"🚚 ڈلیوری چارج: PKR {int(charge)}",
+        "de": f"🚚 Liefergebühr: PKR {int(charge)}",
+    }.get(lang, f"🚚 Delivery: PKR {int(charge)}")
 
 
 def init_analytics():
@@ -512,6 +625,11 @@ INTENT_KEYWORDS = {
         "kitna total", "total kya", "abhi total", "total bta", "price total",
         "how much total", "total price", "total amount",
     ],
+    "delivery_charge": [
+        "delivery charge", "delivery fee", "delivery cost", "delivery kitna",
+        "delivery charges", "kitna delivery", "free delivery", "delivery free",
+        "ڈلیوری چارج", "ڈلیوری فیس", "liefergebühr",
+    ],
 }
 
 # ============================================================
@@ -580,7 +698,6 @@ QUANTITY_WORDS = {
     "char": 4, "four": 4,
     "panch": 5, "five": 5,
     "chay": 6, "six": 6,
-    # Ordinals ("2nd one is XL") mean "that item", not quantity 2
     "1st": 1, "2nd": 1, "3rd": 1, "4th": 1, "5th": 1,
     "first": 1, "second": 1, "third": 1, "fourth": 1,
 }
@@ -594,11 +711,9 @@ SIZE_HINTS = [
 
 def _extract_quantity(token: str) -> int:
     t = token.strip().lower()
-    # strip ordinal suffixes before lookup
     t_clean = re.sub(r'(st|nd|rd|th)$', '', t)
     if t_clean.isdigit():
         val = int(t_clean)
-        # If the original token was an ordinal (had suffix), treat as qty=1
         if re.search(r'(st|nd|rd|th)$', t):
             return 1
         return val
@@ -682,15 +797,6 @@ def filter_products(query: str) -> List[Dict]:
 # ============================================================
 
 def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
-    """
-    Parse messages like "1 half plate and 2nd full plate" or
-    "small mild and xl medium" for the SAME product.
-
-    FIX 1 applied: ordinal prefixes ("2nd", "second") → qty=1, not qty=2.
-
-    Returns list of:
-      { size_hint, size_label, qty, matched_variant, spice (if found) }
-    """
     variants = product.get("variants", [])
     q        = text.lower()
 
@@ -715,7 +821,6 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
             qty     = _extract_quantity(raw_qty)
             part    = part[qty_match.end():].strip()
 
-        # "one is" / "2nd one is" pattern — strip "one is"
         part = re.sub(r'^one\s+is\s+', '', part).strip()
 
         matched_variant    = None
@@ -738,7 +843,6 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
         if not matched_variant:
             continue
 
-        # Optionally detect inline spice
         spice_levels = product.get("spice_levels", [])
         found_spice  = ""
         if spice_levels:
@@ -758,7 +862,6 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
 
 
 def parse_multi_item_order(text: str) -> List[Dict]:
-    """Parse free-text → list of order items across potentially different products."""
     parts   = re.split(r'\b(?:and|aur|or|also|\+|,|پھر|اور)\b', text, flags=re.IGNORECASE)
     results = []
 
@@ -837,20 +940,29 @@ def build_cart_item(product: Dict, size: str, spice: str, extras: List[str], qua
     }
 
 
-def create_order_from_cart(user_id: str, cart_items: List[Dict], address: str) -> str:
+def create_order_from_cart(
+    user_id: str,
+    cart_items: List[Dict],
+    address: str,
+    delivery_charge: float = 0.0,
+) -> str:
     if orders_col is None:
         return "db_error"
 
-    total = sum(item["total_item_price"] for item in cart_items)
+    subtotal = sum(item["total_item_price"] for item in cart_items)
+    total    = subtotal + delivery_charge
+
     order = {
-        "user_id":    user_id,
-        "items":      cart_items,
-        "dish":       cart_items[0]["title"] if cart_items else "Order",
-        "quantity":   sum(i["quantity"] for i in cart_items),
-        "total_price": total,
-        "address":    address.strip(),
-        "status":     "Pending",
-        "timestamp":  datetime.utcnow().isoformat(),
+        "user_id":         user_id,
+        "items":           cart_items,
+        "dish":            cart_items[0]["title"] if cart_items else "Order",
+        "quantity":        sum(i["quantity"] for i in cart_items),
+        "subtotal":        subtotal,
+        "delivery_charge": delivery_charge,
+        "total_price":     total,
+        "address":         address.strip(),
+        "status":          "Pending",
+        "timestamp":       datetime.utcnow().isoformat(),
         "customization": {
             "size":   cart_items[0].get("size", "") if cart_items else "",
             "spice":  cart_items[0].get("spice", "") if cart_items else "",
@@ -873,7 +985,7 @@ def create_order_from_cart(user_id: str, cart_items: List[Dict], address: str) -
     return str(result.inserted_id)
 
 
-def create_order_from_session(user_id: str, session: Dict, address: str) -> str:
+def create_order_from_session(user_id: str, session: Dict, address: str, delivery_charge: float = 0.0) -> str:
     po    = session.get("pending_order", {})
     items = po.get("items", [])
     if not items:
@@ -888,7 +1000,7 @@ def create_order_from_session(user_id: str, session: Dict, address: str) -> str:
             "extras_price":     0,
             "total_item_price": po.get("price", 0),
         }]
-    return create_order_from_cart(user_id, items, address)
+    return create_order_from_cart(user_id, items, address, delivery_charge)
 
 # ============================================================
 # FAQ ENGINE
@@ -988,9 +1100,9 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], 
     body_text   = {"en": "Tap an item to order or ask me anything! 🍽️",
                    "ur": "کوئی آئٹم چنیں یا کچھ بھی پوچھیں! 🍽️",
                    "de": "Tippen Sie auf ein Element oder fragen Sie mich! 🍽️"}
-    footer_text = {"en": "Powered by AI Restaurant Bot v10",
-                   "ur": "AI ریسٹورنٹ بوٹ v10",
-                   "de": "Betrieben von AI Restaurant Bot v10"}
+    footer_text = {"en": "Powered by AI Restaurant Bot v11",
+                   "ur": "AI ریسٹورنٹ بوٹ v11",
+                   "de": "Betrieben von AI Restaurant Bot v11"}
     button_text = {"en": "View Menu", "ur": "مینو دیکھیں", "de": "Menü anzeigen"}
     section_title = {"en": "Our Menu", "ur": "ہمارا مینو", "de": "Unsere Speisekarte"}
 
@@ -1215,15 +1327,8 @@ async def _finalise_single_item(
     cart_item: Dict,
     lang: str,
 ):
-    """
-    Append cart_item to the session cart.
-    If the cart already has OTHER items (user added this via 'Add More'),
-    go straight to step 5 (confirm multi-item cart).
-    Otherwise fall through to step 4 (ask address for single item).
-    """
     session["cart"].append(cart_item)
     if len(session["cart"]) > 1:
-        # Existing items present — show unified cart and confirm
         session["step"] = 5
         total   = _recalc_cart(session["cart"])
         summary = _build_cart_summary(session["cart"], total, lang)
@@ -1238,7 +1343,6 @@ async def _finalise_single_item(
             ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"],
         )
     else:
-        # Only this single item — proceed to address step
         session["step"] = 4
         ask_addr = {
             "en": "📍 Please share your full delivery address (house no., street, area, city):",
@@ -1309,11 +1413,9 @@ async def _handle_single_item_order(from_number: str, text: str, lang: str) -> b
                 session["step"] = 5
             return True
 
-        # Single size: ask for it
         session["step"] = 1
         await _ask_size(from_number, p, lang)
     else:
-        # No variants — no size needed; go to address (or confirm if cart has items)
         name_msg = f"🎉 *{dish_name}* — PKR {int(base_price)} added!"
         await send_whatsapp_text(from_number, name_msg)
         cart_item = build_cart_item(p, "", "", [], 1)
@@ -1409,7 +1511,6 @@ async def handle_multi_item_order(from_number: str, text: str, lang: str) -> boo
                 session["step"] = 5
                 return True
 
-    # Standard multi-product flow
     cart_items   = list(session.get("cart", []))
     missing_info = []
 
@@ -1597,7 +1698,6 @@ async def receive_message(request: Request):
             variants = po.get("variants", [])
             product  = po.get("product_ref", {})
 
-            # Check if user specified MULTIPLE sizes in one reply
             if product:
                 multi_sizes = _parse_multi_size_from_text(msg_text, product)
                 if len(multi_sizes) >= 2:
@@ -1638,7 +1738,6 @@ async def receive_message(request: Request):
                                                         ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                     return JSONResponse({"status": "ok"})
 
-            # Single size response
             matched = _match_variant(variants, msg_text)
             if not matched and variants:
                 sizes_str = " / ".join(v["size"] for v in variants)
@@ -1666,7 +1765,6 @@ async def receive_message(request: Request):
                 has_extras      = await _ask_extras(from_num, product_ref, lang)
                 session["step"] = 3 if has_extras else 4
                 if not has_extras:
-                    # ── FIX 7: if cart has items, go to confirm instead ──────
                     if session.get("cart"):
                         cart_item = build_cart_item(
                             po.get("product_ref", {}),
@@ -1702,7 +1800,6 @@ async def receive_message(request: Request):
             has_extras     = await _ask_extras(from_num, product_ref, lang)
             session["step"] = 3 if has_extras else 4
             if not has_extras:
-                # ── FIX 7: if cart already has items, merge & confirm ────
                 if session.get("cart"):
                     cart_item = build_cart_item(
                         po.get("product_ref", {}),
@@ -1721,8 +1818,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 3 — User picks EXTRAS (single item)
-        # FIX 2: only apply extras to the current pending item
-        # FIX 4: fuzzy match for typos like "Cold drinl"
         # ═══════════════════════════════════════════════════════
         if step == 3:
             po             = session.get("pending_order", {})
@@ -1740,7 +1835,6 @@ async def receive_message(request: Request):
 
             chosen = []
             if not any(skip in q for skip in ["no", "skip", "nothing", "nahi", "nope", "nein"]):
-                # FIX 4: use fuzzy matching
                 chosen = _extract_extras_from_text(msg_text, extras_options)
                 for e_name in chosen:
                     _track({f"extras_preference.{e_name}": 1})
@@ -1749,20 +1843,17 @@ async def receive_message(request: Request):
             po["extras"]    = chosen
             po["price"]     = po.get("price", 0) + extras_price
 
-            # Build the current pending item's cart entry
             cart_item = build_cart_item(
                 po.get("product_ref", {}),
                 po.get("size", ""), po.get("spice", ""),
                 chosen, po.get("qty", 1)
             )
 
-            # ── FIX 7: merge into existing cart if needed ─────────────────
             await _finalise_single_item(from_num, session, cart_item, lang)
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
         # STEP 4 — User provides ADDRESS (single item)
-        # FIX 6: reject bare words like "Yes" as address
         # ═══════════════════════════════════════════════════════
         if step == 4:
             po = session.get("pending_order", {})
@@ -1779,7 +1870,6 @@ async def receive_message(request: Request):
                     return JSONResponse({"status": "ok"})
             else:
                 address_candidate = extract_address(msg_text) or msg_text.strip()
-                # FIX 6: validate
                 if not _is_valid_address(address_candidate):
                     retry_addr = {
                         "en": "📍 Please share your *full* delivery address.\nExample: *House 12, Block B, Gulshan, Karachi*",
@@ -1790,7 +1880,6 @@ async def receive_message(request: Request):
                     return JSONResponse({"status": "ok"})
                 address = address_candidate
 
-            # Build cart item from pending_order if not already in cart
             if not session.get("cart"):
                 cart_item = build_cart_item(
                     po.get("product_ref", {}),
@@ -1799,8 +1888,11 @@ async def receive_message(request: Request):
                 )
                 session["cart"] = [cart_item]
 
-            order_id = create_order_from_cart(from_num, session["cart"], address)
-            total    = _recalc_cart(session["cart"])
+            subtotal        = _recalc_cart(session["cart"])
+            delivery_charge = calculate_delivery_charge(subtotal, address)
+            grand_total     = subtotal + delivery_charge
+            order_id        = create_order_from_cart(from_num, session["cart"], address, delivery_charge)
+
             session["last_address"] = address
             update_preferences(from_num, product_title=po.get("dish", ""))
             reset_cart_only(session)
@@ -1819,7 +1911,8 @@ async def receive_message(request: Request):
             }.get(lang, "None")
 
             item_category = po.get("category", "")
-            delivery_time = get_delivery_time(item_category)   # FIX 5
+            delivery_time = get_delivery_time(item_category)
+            dc_line       = _delivery_charge_info_text(delivery_charge, lang)
 
             conf = {
                 "en": (
@@ -1828,7 +1921,9 @@ async def receive_message(request: Request):
                     f"📏 Size: {po.get('size', 'N/A')}\n"
                     f"🌶️ Spice: {po.get('spice', '') or 'Default'}\n"
                     f"➕ Extras: {extras_text}\n"
-                    f"💰 Total: PKR {int(total)}\n"
+                    f"💰 Subtotal: PKR {int(subtotal)}\n"
+                    f"{dc_line}\n"
+                    f"💳 Grand Total: PKR {int(grand_total)}\n"
                     f"📍 Address: {address}\n"
                     f"🔖 Order ID: #{order_id[-6:]}\n\n"
                     f"⏱️ Estimated delivery: {delivery_time}\n"
@@ -1836,10 +1931,13 @@ async def receive_message(request: Request):
                 ),
                 "ur": (
                     f"✅ *آرڈر تصدیق ہوگیا!*\n\n"
-                    f"🍽️ *{po.get('dish', 'Item')}* | PKR {int(total)}\n"
+                    f"🍽️ *{po.get('dish', 'Item')}*\n"
                     f"📏 سائز: {po.get('size', '') or 'N/A'}\n"
                     f"🌶️ مسالہ: {po.get('spice', '') or 'ڈیفالٹ'}\n"
                     f"➕ اضافی: {extras_text}\n"
+                    f"💰 سب ٹوٹل: PKR {int(subtotal)}\n"
+                    f"{dc_line}\n"
+                    f"💳 کل رقم: PKR {int(grand_total)}\n"
                     f"📍 پتہ: {address}\n"
                     f"🔖 آرڈر نمبر: #{order_id[-6:]}\n\n"
                     f"⏱️ تخمینی ڈلیوری: {delivery_time}\n"
@@ -1847,10 +1945,13 @@ async def receive_message(request: Request):
                 ),
                 "de": (
                     f"✅ *Bestellung bestätigt!*\n\n"
-                    f"🍽️ *{po.get('dish', 'Item')}* | PKR {int(total)}\n"
+                    f"🍽️ *{po.get('dish', 'Item')}*\n"
                     f"📏 Größe: {po.get('size', '') or 'N/A'}\n"
                     f"🌶️ Schärfe: {po.get('spice', '') or 'Standard'}\n"
                     f"➕ Extras: {extras_text}\n"
+                    f"💰 Zwischensumme: PKR {int(subtotal)}\n"
+                    f"{dc_line}\n"
+                    f"💳 Gesamtbetrag: PKR {int(grand_total)}\n"
                     f"📍 Adresse: {address}\n"
                     f"🔖 Bestellnr: #{order_id[-6:]}\n\n"
                     f"⏱️ Voraussichtliche Lieferung: {delivery_time}\n"
@@ -1918,7 +2019,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 6 — ADDRESS for cart order
-        # FIX 6: reject bare words
         # ═══════════════════════════════════════════════════════
         if step == 6:
             cart_items = session.get("cart", [])
@@ -1944,7 +2044,6 @@ async def receive_message(request: Request):
                     return JSONResponse({"status": "ok"})
             else:
                 address_candidate = extract_address(msg_text) or msg_text.strip()
-                # FIX 6: validate
                 if not _is_valid_address(address_candidate):
                     retry_addr = {
                         "en": "📍 Please share your *full* delivery address.\nExample: *House 12, Block B, Gulshan, Karachi*",
@@ -1955,9 +2054,11 @@ async def receive_message(request: Request):
                     return JSONResponse({"status": "ok"})
                 address = address_candidate
 
-            order_id = create_order_from_cart(from_num, cart_items, address)
-            total    = _recalc_cart(cart_items)
-            summary  = _build_cart_summary(cart_items, total, lang)
+            subtotal        = _recalc_cart(cart_items)
+            delivery_charge = calculate_delivery_charge(subtotal, address)
+            grand_total     = subtotal + delivery_charge
+            summary         = _build_cart_summary(cart_items, subtotal, lang, delivery_charge, show_delivery=True)
+            order_id        = create_order_from_cart(from_num, cart_items, address, delivery_charge)
 
             session["last_address"] = address
             reset_cart_only(session)
@@ -1973,7 +2074,7 @@ async def receive_message(request: Request):
 
             cart_cats     = [i.get("category", "") for i in cart_items]
             dominant_cat  = max(set(cart_cats), key=cart_cats.count) if cart_cats else ""
-            delivery_time = get_delivery_time(dominant_cat)   # FIX 5
+            delivery_time = get_delivery_time(dominant_cat)
 
             conf = {
                 "en": (
@@ -2054,7 +2155,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 20 — Multi-size SPICE RESOLUTION
-        # FIX 3: parse per-item spice; single bare word = shared fallback
         # ═══════════════════════════════════════════════════════
         if step == 20:
             multi_queue  = session.get("multi_size_queue", [])
@@ -2062,9 +2162,6 @@ async def receive_message(request: Request):
             spice_levels = product.get("spice_levels", []) if product else []
             cart_items   = list(session.get("cart", []))
 
-            # Try to find per-item spice mentions in the reply
-            # e.g. "small mild and xl medium"
-            # First parse the reply with the multi-size helper to get spice per size
             per_item_parsed = _parse_multi_size_from_text(msg_text, product) if product else []
             size_spice_map: Dict[str, str] = {}
             for pi in per_item_parsed:
@@ -2072,7 +2169,6 @@ async def receive_message(request: Request):
                     size_key = pi["matched_variant"].get("size", "").lower()
                     size_spice_map[size_key] = pi["spice"]
 
-            # Bare single spice word fallback (e.g. user just says "Spicy")
             shared_spice = ""
             for sl in sorted(spice_levels, key=len, reverse=True):
                 if sl.lower() in q:
@@ -2083,7 +2179,6 @@ async def receive_message(request: Request):
                 mv         = queued_item["matched_variant"]
                 size_label = mv.get("size", "").lower()
 
-                # Priority: per-item > shared > first spice level
                 found_spice = (
                     size_spice_map.get(size_label)
                     or shared_spice
@@ -2115,9 +2210,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 30 — Multi-size EXTRAS
-        # FIX 2: per-item extras — only apply to items matching the
-        #         product name mentioned in the extras reply.
-        # FIX 4: fuzzy match typos
         # ═══════════════════════════════════════════════════════
         if step == 30:
             product        = session.get("pending_order", {}).get("product_ref", {})
@@ -2126,18 +2218,14 @@ async def receive_message(request: Request):
 
             chosen = []
             if not any(skip in q for skip in ["no", "skip", "nothing", "nahi", "nope", "nein"]):
-                # FIX 4: fuzzy matching
                 chosen = _extract_extras_from_text(msg_text, extras_options)
                 for e_name in chosen:
                     _track({f"extras_preference.{e_name}": 1})
 
             extras_price = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen)
 
-            # FIX 2: Determine which cart items belong to this product
             current_product_id = str(product.get("_id", "")) if product else ""
 
-            # If user specified a size in the extras message (e.g. "In Small pizza add Extra Cheese"),
-            # only apply to that size. Otherwise apply to all items of this product.
             targeted_size = ""
             if product:
                 for v in product.get("variants", []):
@@ -2149,7 +2237,6 @@ async def receive_message(request: Request):
                 is_same_product = (item.get("product_id") == current_product_id)
                 if not is_same_product:
                     continue
-                # If a size was targeted, only update that size
                 if targeted_size and item.get("size", "").lower() != targeted_size:
                     continue
                 if chosen:
@@ -2182,6 +2269,44 @@ async def receive_message(request: Request):
             if sugs:
                 reply += "\n\n💡 " + "\n• ".join(sugs)
             await send_whatsapp_buttons(from_num, reply, ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"])
+            return JSONResponse({"status": "ok"})
+
+        # ── Delivery charge inquiry ────────────────────────────
+        if any(kw in q for kw in INTENT_KEYWORDS["delivery_charge"]):
+            dc         = BOT_DATA.get("delivery_charges", {})
+            flat       = float(dc.get("flat_charge", 0) or 0)
+            free_above = float(dc.get("free_above", 0) or 0)
+            per_area   = dc.get("per_area", {})
+
+            lines = []
+            if free_above > 0:
+                lines.append({
+                    "en": f"✅ Free delivery on orders above PKR {int(free_above)}!",
+                    "ur": f"✅ PKR {int(free_above)} سے زیادہ آرڈر پر مفت ڈلیوری!",
+                    "de": f"✅ Kostenlose Lieferung bei Bestellungen über PKR {int(free_above)}!",
+                }.get(lang, f"✅ Free delivery above PKR {int(free_above)}!"))
+            if flat > 0 and not lines:
+                lines.append({
+                    "en": f"🚚 Standard delivery charge: PKR {int(flat)}",
+                    "ur": f"🚚 معیاری ڈلیوری چارج: PKR {int(flat)}",
+                    "de": f"🚚 Standard-Liefergebühr: PKR {int(flat)}",
+                }.get(lang, f"🚚 Delivery charge: PKR {int(flat)}"))
+            elif flat == 0 and not lines:
+                lines.append({
+                    "en": "🎉 We offer FREE delivery!",
+                    "ur": "🎉 ہم مفت ڈلیوری کرتے ہیں!",
+                    "de": "🎉 Wir liefern KOSTENLOS!",
+                }.get(lang, "🎉 FREE delivery!"))
+            if per_area:
+                area_lines = "\n".join(f"  • {k.title()}: PKR {int(v)}" for k, v in per_area.items())
+                lines.append({
+                    "en": f"📍 Area-specific charges:\n{area_lines}",
+                    "ur": f"📍 علاقہ مخصوص چارجز:\n{area_lines}",
+                    "de": f"📍 Bereichsspezifische Gebühren:\n{area_lines}",
+                }.get(lang, f"📍 Area charges:\n{area_lines}"))
+
+            reply = "\n\n".join(lines)
+            await send_whatsapp_text(from_num, reply)
             return JSONResponse({"status": "ok"})
 
         # ── Show cart ──────────────────────────────────────────
@@ -2622,6 +2747,7 @@ async def update_faqs(request: Request):
     if meta_col is None:
         return JSONResponse({"message": "DB not connected"}, status_code=500)
     body = await request.json()
+    # Always upsert into the canonical type="config" document
     meta_col.update_one({"type": "config"}, {"$set": {"faq": body}}, upsert=True)
     load_data_realtime()
     return JSONResponse({"message": "FAQs updated!", "status": "success"})
@@ -2693,6 +2819,106 @@ async def update_delivery_time(request: Request):
     })
 
 # ============================================================
+# DELIVERY CHARGES API  (NEW in v11)
+# ============================================================
+
+@app.get("/api/delivery-charges")
+async def get_delivery_charges():
+    """
+    Returns current delivery charge configuration from MongoDB.
+
+    Example response:
+    {
+        "delivery_charges": {
+            "flat_charge": 50,
+            "free_above": 500,
+            "per_area": { "clifton": 80, "dha": 100 },
+            "free_keywords": ["head office", "self pickup"]
+        }
+    }
+    """
+    load_data_realtime()
+    return {"delivery_charges": BOT_DATA.get("delivery_charges", {})}
+
+
+@app.post("/api/delivery-charges")
+async def update_delivery_charges(request: Request):
+    """
+    Update delivery charge configuration.
+
+    Accepted body fields (all optional):
+      flat_charge   (float) — default charge applied to every order
+      free_above    (float) — order subtotal threshold for free delivery (0 = disabled)
+      per_area      (dict)  — { "area name": charge_pkr }
+      free_keywords (list)  — list of address substrings that grant free delivery
+
+    Example body:
+    {
+        "flat_charge": 50,
+        "free_above": 500,
+        "per_area": { "clifton": 80, "dha": 100, "defence": 100 },
+        "free_keywords": ["self pickup", "collect"]
+    }
+    """
+    if meta_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    allowed_keys = {"flat_charge", "free_above", "per_area", "free_keywords"}
+    if not any(k in body for k in allowed_keys):
+        return JSONResponse({"message": f"Provide at least one of: {allowed_keys}"}, status_code=400)
+
+    # Load existing config so we can merge, not replace
+    existing = BOT_DATA.get("delivery_charges", {})
+    updated_dc = {
+        "flat_charge":   float(existing.get("flat_charge", 0) or 0),
+        "free_above":    float(existing.get("free_above", 0) or 0),
+        "per_area":      existing.get("per_area", {}),
+        "free_keywords": existing.get("free_keywords", []),
+    }
+
+    if "flat_charge" in body:
+        try:
+            updated_dc["flat_charge"] = float(body["flat_charge"])
+        except (TypeError, ValueError):
+            return JSONResponse({"message": "flat_charge must be a number"}, status_code=400)
+
+    if "free_above" in body:
+        try:
+            updated_dc["free_above"] = float(body["free_above"])
+        except (TypeError, ValueError):
+            return JSONResponse({"message": "free_above must be a number"}, status_code=400)
+
+    if "per_area" in body:
+        if not isinstance(body["per_area"], dict):
+            return JSONResponse({"message": "per_area must be an object"}, status_code=400)
+        # Normalise keys to lowercase
+        updated_dc["per_area"] = {
+            k.lower().strip(): float(v)
+            for k, v in body["per_area"].items()
+        }
+
+    if "free_keywords" in body:
+        if not isinstance(body["free_keywords"], list):
+            return JSONResponse({"message": "free_keywords must be a list"}, status_code=400)
+        updated_dc["free_keywords"] = [str(kw).lower().strip() for kw in body["free_keywords"]]
+
+    meta_col.update_one(
+        {"type": "config"},
+        {"$set": {"delivery_charges": updated_dc}},
+        upsert=True,
+    )
+    load_data_realtime()
+    return JSONResponse({
+        "message":          "Delivery charges updated!",
+        "status":           "success",
+        "delivery_charges": BOT_DATA.get("delivery_charges", {}),
+    })
+
+# ============================================================
 # ANALYTICS API
 # ============================================================
 
@@ -2751,6 +2977,7 @@ async def get_api_data():
                 "discount_message":    BOT_DATA.get("discount_message", {}),
                 "supported_languages": BOT_DATA.get("supported_languages", ["en", "ur", "de"]),
                 "smart_suggestions":   BOT_DATA.get("smart_suggestions", {}),
+                "delivery_charges":    BOT_DATA.get("delivery_charges", {}),
             },
         }
     except Exception as e:
@@ -2765,8 +2992,10 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v10.0 started!")
+    logger.info("🚀 Restaurant Bot v11.0 started!")
     logger.info(f"   Products loaded   : {len(PRODUCTS_DATA)}")
+    logger.info(f"   FAQ keys          : {list(BOT_DATA.get('faq', {}).keys())}")
+    logger.info(f"   Delivery charges  : {BOT_DATA.get('delivery_charges', {})}")
     logger.info(f"   WhatsApp connected: {'✅' if WHATSAPP_TOKEN else '❌'}")
     logger.info(f"   MongoDB connected : {'✅' if products_col is not None else '❌'}")
     logger.info(f"   AI fallback       : {'✅' if ANTHROPIC_API_KEY else '⚠️ No ANTHROPIC_API_KEY — static fallback active'}")
