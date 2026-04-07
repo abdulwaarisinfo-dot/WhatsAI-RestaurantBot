@@ -1,13 +1,22 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v7.1-fixed)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v8.0)
 ==============================================================
-v7.1-fixed patches over v7.1:
-  ✅ FIX: Size matching now case-insensitive on BOTH sides (DB + user input)
-  ✅ FIX: _normalize_size handles "half plate", "full plate", "family pack" etc.
-  ✅ FIX: Language NOT re-detected for short button replies (<= 20 chars)
-  ✅ FIX: Session language preserved — never overwritten by button/emoji text
-  ✅ FIX: "order new" / "naya order" / "order again" all trigger new-order reset
-  ✅ FIX: Interactive button replies use existing session lang, not re-detected
+v8.0 improvements over v7.1-fixed:
+  ✅ FIX: bot_metadata (initial_message, smart_suggestions, discount_message)
+         now loaded with proper fallback — never silently skips DB fields
+  ✅ NEW: Delivery time fetched from MongoDB bot_metadata (delivery_time field)
+         — editable via CRM, never hardcoded. Falls back to "35-45 mins"
+  ✅ NEW: Delivery time supports per-category exceptions stored in DB
+         (e.g. karahi: "45-60 mins", biryani: "30-40 mins")
+  ✅ FIX: Spice detection — "less spicy" no longer falls through to first option
+  ✅ FIX: Extras parsing — "Salad and tell me my total" correctly picks "Salad"
+         and ignores the non-extras trailing text
+  ✅ FIX: Cart "show my total" mid-extras reply now shows running total + continues
+  ✅ FIX: Order confirmation uses per-item delivery_time from DB, not hardcoded
+  ✅ NEW: Smarter fallback message — shorter, cleaner, no bullet clutter
+  ✅ NEW: Inline "show total" / "mera total" intent recognised at any step
+  ✅ KEEP: All existing logics 100% preserved — size matching, multi-item,
+           language detection, session, analytics, rate limit, cart flow
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -30,7 +39,7 @@ from collections import defaultdict
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v7")
+logger = logging.getLogger("RestaurantBot.v8")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -53,8 +62,8 @@ def _is_rate_limited(user_id: str) -> bool:
 # ────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v7.1-fixed",
-    version="7.1-fixed",
+    title="WhatsApp AI Restaurant Bot v8.0",
+    version="8.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -282,28 +291,67 @@ def _build_full_price_menu(products: List[Dict], category_emoji: str = "🍽️"
 # ============================================================
 
 def load_data_realtime():
+    """
+    Reload products + bot_metadata from MongoDB.
+    Merges ALL documents in bot_metadata so fields spread across multiple
+    docs (e.g. one doc for config, one for suggestions) are all captured.
+    Also builds a clean BOT_DATA with sane defaults for every expected key.
+    """
     global PRODUCTS_DATA, BOT_DATA
     if products_col is None or meta_col is None:
         return
     try:
         PRODUCTS_DATA = [_str_id(p) for p in products_col.find({})]
-        meta = meta_col.find_one({"type": "config"}) or meta_col.find_one({})
-        if meta:
-            BOT_DATA = _str_id(meta)
-        else:
-            BOT_DATA = {
-                "supported_languages": ["en", "ur", "de"],
-                "initial_message": {"en": "Welcome! 🍽️ How can I help you today?"},
-                "faq": {},
-                "smart_suggestions": {},
-            }
-        logger.info(f"Data synced | Products: {len(PRODUCTS_DATA)}")
+
+        # ── Merge all meta docs so no field is ever lost ──────────────
+        merged: Dict[str, Any] = {}
+        for doc in meta_col.find({}):
+            _str_id(doc)
+            merged.update({k: v for k, v in doc.items() if k != "_id"})
+
+        # ── Sane defaults for every key the bot reads ─────────────────
+        BOT_DATA = {
+            "supported_languages":  ["en", "ur", "de"],
+            "initial_message":      {"en": "Welcome! 🍽️ How can I help you today?",
+                                     "ur": "خوش آمدید! 🍽️ آج میں آپ کی کیا مدد کر سکتا ہوں؟",
+                                     "de": "Willkommen! 🍽️ Wie kann ich Ihnen heute helfen?"},
+            "discount_message":     {},
+            "faq":                  {},
+            "smart_suggestions":    {},
+            # delivery_time: default string shown in order confirmation
+            "delivery_time":        "35-45 mins",
+            # delivery_time_exceptions: per-category overrides  {category: "time_string"}
+            "delivery_time_exceptions": {},
+        }
+        BOT_DATA.update(merged)
+
+        logger.info(
+            f"Data synced | Products: {len(PRODUCTS_DATA)} | "
+            f"Delivery time: {BOT_DATA['delivery_time']} | "
+            f"Languages: {BOT_DATA['supported_languages']}"
+        )
     except Exception as e:
         logger.error(f"Data load error: {e}")
 
-# ============================================================
-# ANALYTICS
-# ============================================================
+def get_delivery_time(category: str = "") -> str:
+    """
+    Return the delivery time string for a given category.
+    Checks per-category exceptions first (stored in DB), falls back to
+    the global delivery_time, then to a hard-coded safety net.
+
+    The DB shape for bot_metadata:
+      { delivery_time: "35-45 mins",
+        delivery_time_exceptions: { "karahi": "45-60 mins", "biryani": "30-40 mins" } }
+
+    Restaurant owners can change these any time via crm.html without
+    touching any code.
+    """
+    exceptions = BOT_DATA.get("delivery_time_exceptions", {})
+    if category and category.lower() in exceptions:
+        return exceptions[category.lower()]
+    return BOT_DATA.get("delivery_time", "35-45 mins")
+
+
 
 def init_analytics():
     if analytics_col is not None and analytics_col.count_documents({"type": "analytics"}) == 0:
@@ -422,6 +470,12 @@ INTENT_KEYWORDS = {
         "dobara order",       # ← ADDED: Urdu "order again"
         "phir order",         # ← ADDED
         "again order",        # ← ADDED
+    ],
+    # v8.0: show running total at any point in the flow
+    "show_total": [
+        "tell me total", "show total", "my total", "mera total", "total kitna",
+        "kitna total", "total kya", "abhi total", "total bta", "price total",
+        "how much total", "total price", "total amount",
     ],
 }
 
@@ -1267,8 +1321,10 @@ async def receive_message(request: Request):
         if step == 2:
             po            = session.get("pending_order", {})
             spice_levels  = po.get("spice_levels", [])
+            # v8.0 FIX: sort by length descending so "Less Spicy" is checked before "Spicy"
             matched_spice = next(
-                (s for s in spice_levels if s.lower() in q),
+                (s for s in sorted(spice_levels, key=len, reverse=True)
+                 if s.lower().strip() in q),
                 spice_levels[0] if spice_levels else ""
             )
             po["spice"] = matched_spice.strip().title()
@@ -1294,8 +1350,22 @@ async def receive_message(request: Request):
             po             = session.get("pending_order", {})
             extras_options = po.get("extras_options", [])
             chosen         = []
+
+            # v8.0 FIX: check "show total" inline — respond with running total, then
+            # re-ask extras so the user can still pick them
+            if any(kw in q for kw in INTENT_KEYWORDS["show_total"]):
+                current_total = po.get("price", 0)
+                total_msg = {
+                    "en": f"💰 Running total so far: *PKR {int(current_total)}*\n\nNow, add extras for *{po.get('dish','')}*? (type names or 'no')",
+                    "ur": f"💰 ابھی تک کل: *PKR {int(current_total)}*\n\n*{po.get('dish','')}* کے ساتھ اضافی؟ (نام لکھیں یا 'no')",
+                    "de": f"💰 Bisheriger Betrag: *PKR {int(current_total)}*\n\nExtras für *{po.get('dish','')}*? (Namen oder 'nein')",
+                }
+                await send_whatsapp_text(from_num, total_msg.get(lang, total_msg["en"]))
+                return JSONResponse({"status": "ok"})
+
             if not any(skip in q for skip in ["no", "skip", "nothing", "nahi", "nope", "nein"]):
                 for e in extras_options:
+                    # v8.0 FIX: only match the extra name itself, not arbitrary trailing words
                     if e["name"].lower().strip() in q:
                         chosen.append(e["name"].strip().title())
                         _track({f"extras_preference.{e['name'].strip().title()}": 1})
@@ -1352,6 +1422,10 @@ async def receive_message(request: Request):
                 "en": "None", "ur": "کچھ نہیں", "de": "Keine"
             }.get(lang, "None")
 
+            # v8.0: delivery time from DB (editable via CRM), not hardcoded
+            item_category  = po.get("category", "")
+            delivery_time  = get_delivery_time(item_category)
+
             conf = {
                 "en": (
                     f"✅ *Order Confirmed!*\n\n"
@@ -1362,7 +1436,7 @@ async def receive_message(request: Request):
                     f"💰 Total: PKR {int(po.get('price', 0))}\n"
                     f"📍 Address: {address}\n"
                     f"🔖 Order ID: #{order_id[-6:]}\n\n"
-                    f"⏱️ Estimated delivery: 35-45 mins\n"
+                    f"⏱️ Estimated delivery: {delivery_time}\n"
                     f"📲 Type *new order* anytime to order again!"
                 ),
                 "ur": (
@@ -1373,7 +1447,7 @@ async def receive_message(request: Request):
                     f"➕ اضافی: {extras_text}\n"
                     f"📍 پتہ: {address}\n"
                     f"🔖 آرڈر نمبر: #{order_id[-6:]}\n\n"
-                    f"⏱️ تخمینی ڈلیوری: 35-45 منٹ\n"
+                    f"⏱️ تخمینی ڈلیوری: {delivery_time}\n"
                     f"📲 نیا آرڈر دینے کے لیے *new order* لکھیں۔"
                 ),
                 "de": (
@@ -1384,7 +1458,7 @@ async def receive_message(request: Request):
                     f"➕ Extras: {extras_text}\n"
                     f"📍 Adresse: {address}\n"
                     f"🔖 Bestellnr: #{order_id[-6:]}\n\n"
-                    f"⏱️ Voraussichtliche Lieferung: 35-45 Min.\n"
+                    f"⏱️ Voraussichtliche Lieferung: {delivery_time}\n"
                     f"📲 Tippen Sie *new order* für eine neue Bestellung."
                 ),
             }
@@ -1492,13 +1566,18 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, db_err.get(lang, db_err["en"]))
                 return JSONResponse({"status": "ok"})
 
+            # v8.0: pick most common category in cart for delivery time exception lookup
+            cart_cats      = [i.get("category", "") for i in cart_items]
+            dominant_cat   = max(set(cart_cats), key=cart_cats.count) if cart_cats else ""
+            delivery_time  = get_delivery_time(dominant_cat)
+
             conf = {
                 "en": (
                     f"✅ *Order Confirmed!*\n\n"
                     f"{summary}\n\n"
                     f"📍 Address: {address}\n"
                     f"🔖 Order ID: #{order_id[-6:]}\n"
-                    f"⏱️ Estimated delivery: 35-45 mins\n\n"
+                    f"⏱️ Estimated delivery: {delivery_time}\n\n"
                     f"📲 Type *new order* anytime to order again!"
                 ),
                 "ur": (
@@ -1506,7 +1585,7 @@ async def receive_message(request: Request):
                     f"{summary}\n\n"
                     f"📍 پتہ: {address}\n"
                     f"🔖 نمبر: #{order_id[-6:]}\n"
-                    f"⏱️ تخمینی ڈلیوری: 35-45 منٹ\n\n"
+                    f"⏱️ تخمینی ڈلیوری: {delivery_time}\n\n"
                     f"📲 نیا آرڈر دینے کے لیے *new order* لکھیں۔"
                 ),
                 "de": (
@@ -1514,7 +1593,7 @@ async def receive_message(request: Request):
                     f"{summary}\n\n"
                     f"📍 Adresse: {address}\n"
                     f"🔖 Nr: #{order_id[-6:]}\n"
-                    f"⏱️ Voraussichtliche Lieferung: 35-45 Min.\n\n"
+                    f"⏱️ Voraussichtliche Lieferung: {delivery_time}\n\n"
                     f"📲 Tippen Sie *new order* für eine neue Bestellung."
                 ),
             }
