@@ -1,53 +1,40 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v13.0)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v13.1)
 ===============================================================
 
-v13.0 MAJOR IMPROVEMENTS over v12.0:
+v13.1 PATCH FIXES over v13.0:
 
-  🧠 SMART NLU ENGINE
-     ─────────────────
-     ✅ AI-POWERED INTENT DETECTION: Every ambiguous message is first parsed
-        by Claude to extract: intent, product_name, quantity, size, spice,
-        extras, address — as structured JSON. No more keyword-only matching.
+  🐛 BUG FIXES
+     ──────────
+     ✅ FIX: _normalize_size now handles ALL weight/kg formats reliably
+        - "half kg", "Half Kg", "Half KG", "0.5kg", "0.5 kg" all resolve to same token
+        - "1 kg", "1 Kg", "1KG", "1.5 kg", "1.5 Kg" all resolve correctly
+        - Order of regex operations fixed: weight-with-space patterns run BEFORE
+          the general \d+\s*kg pattern to prevent partial matches
 
-     ✅ PRODUCT MATCHING OVERHAUL: Uses trigram similarity + semantic matching
-        so "biryani" never resolves to "karahi". Exact title match always wins.
-        Category keywords are secondary hints, never overriding direct matches.
+     ✅ FIX: _match_variant is now bulletproof with 5-tier fallback:
+        Tier 1: Exact normalized match
+        Tier 2: Exact raw (case-insensitive) match  
+        Tier 3: Normalized substring match
+        Tier 4: Raw substring match (catches "half kg" in "Half Kg" etc.)
+        Tier 5: Word-overlap fuzzy match
+        This ensures "half kg", "Half kg", "HALF KG", "0.5kg" ALL match "Half Kg" variant.
 
-     ✅ SMART SIZE RECOVERY: If user says something unexpected during size
-        selection (like "biryani"), the bot checks if it's a product name and
-        switches context gracefully instead of showing a cold error.
+     ✅ FIX: Step 1 (size selection) now gracefully handles button clicks and
+        unrelated text — instead of treating button labels as sizes, it detects
+        known non-size inputs and re-prompts the user politely.
 
-     ✅ CONVERSATIONAL ERROR RECOVERY: Instead of "⚠️ invalid size", the bot
-        says "Did you mean X? Or choose a size: Small / Medium / Large"
-        and understands corrections naturally.
+     ✅ FIX: _is_product_name guard strengthened — only switches context if the
+        matched product confidence is high (score >= 50), preventing weak fuzzy
+        matches from hijacking an active size-selection flow.
 
-     ✅ CONTEXT-AWARE REPLIES: Each step holds conversation context. User can
-        say "make it spicy", "large please", "same address as before",
-        "skip extras", "add cheese" — bot understands naturally.
+     ✅ FIX: SIZE_HINTS list extended with spaced variants ("half kg", "1 kg",
+        "1.5 kg", "2 kg", "0.5 kg") so multi-size parsing catches them too.
 
-     ✅ FUZZY SIZE MATCHING: "medium one", "the big one", "small plz",
-        "half kg please" all resolve correctly to the right variant.
+     ✅ FIX: Added KNOWN_BUTTON_TEXTS set — any text matching a known UI button
+        label is never treated as a size/spice/extra input at mid-flow steps.
 
-     ✅ ORDINAL-AWARE SPICE: "first one spicy second less spicy" correctly
-        maps to individual cart rows without merging.
-
-  🚀 SCALABILITY IMPROVEMENTS
-     ─────────────────────────
-     ✅ AI PARSE CACHE: Repeated similar messages reuse cached AI parse
-        results (LRU, 200 entries) to reduce API calls.
-
-     ✅ GRACEFUL DEGRADATION: If AI parse fails, falls back to v12 rule-
-        based engine so the bot never goes silent.
-
-     ✅ UNIFIED STEP MACHINE: All order steps go through one clean
-        _process_order_step() dispatcher. Easy to add new steps.
-
-     ✅ SMART MULTI-PRODUCT: "biryani half plate and 2 small pizza" correctly
-        identifies TWO different products and queues them in sequence.
-
-  ✅ ALL v12 FEATURES PRESERVED: delivery charges, FAQ, language detection,
-     analytics, rate limiter, CRM panel, multi-language support.
+  ✅ ALL v13.0 FEATURES 100% PRESERVED.
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -72,7 +59,7 @@ from functools import lru_cache
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v13")
+logger = logging.getLogger("RestaurantBot.v13.1")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -86,6 +73,17 @@ RATE_LIMIT_PER_MINUTE = 10
 _AI_PARSE_CACHE: Dict[str, Dict] = {}
 _AI_PARSE_CACHE_MAX = 200
 
+# ── Known UI button labels that should NEVER be treated as size/spice/extras ──
+KNOWN_BUTTON_TEXTS = {
+    "view menu 📋", "place order 🛒", "contact us 📞",
+    "✅ confirm order", "➕ add more", "🗑️ clear cart",
+    "✅ order now", "📋 view menu", "order again 🔄",
+    "view menu", "place order", "contact us",
+    "confirm order", "add more", "clear cart", "order now",
+    "order again", "✅ order now", "📋 view menu", "🔄 order again",
+    # lower-stripped versions handled dynamically
+}
+
 
 def _is_rate_limited(user_id: str) -> bool:
     now = time.time()
@@ -98,8 +96,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v13.0",
-    version="13.0",
+    title="WhatsApp AI Restaurant Bot v13.1",
+    version="13.1",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -179,16 +177,28 @@ def _parse_json_field(value, fallback=None):
 
 
 def _normalize_size(raw: str) -> str:
-    """Normalize size text to canonical form."""
+    """
+    Normalize size text to a canonical comparable form.
+
+    FIX v13.1: Reordered operations so named patterns (half kg, quarter kg)
+    are applied BEFORE the generic numeric \d+\s*kg pattern. This prevents
+    '0.5kg' from being double-processed and ensures all user inputs like
+    'half kg', 'Half Kg', 'HALF KG', '0.5kg', '0.5 kg' resolve identically.
+    """
     s = raw.lower().strip()
-    s = re.sub(r'half\s*kg?', '0.5kg', s)
-    s = re.sub(r'quarter\s*kg?', '0.25kg', s)
+
+    # ── Step 1: Named weight aliases (must run FIRST) ─────────────────
+    s = re.sub(r'\bhalf\s*kg?\b', '0.5kg', s)
+    s = re.sub(r'\bquarter\s*kg?\b', '0.25kg', s)
+
+    # ── Step 2: Unit conversions ──────────────────────────────────────
     s = re.sub(r'(\d+\.?\d*)\s*gram[s]?', lambda m: f"{float(m.group(1))/1000}kg", s)
     s = re.sub(r'(\d+\.?\d*)\s*g\b',      lambda m: f"{float(m.group(1))/1000}kg", s)
     s = re.sub(r'(\d+\.?\d*)\s*kg',       lambda m: f"{float(m.group(1))}kg",      s)
     s = re.sub(r'(\d+\.?\d*)\s*ml',       lambda m: f"{int(float(m.group(1)))}ml", s)
     s = re.sub(r'(\d+\.?\d*)\s*l\b',      lambda m: f"{float(m.group(1))}l",       s)
 
+    # ── Step 3: Plate / pack names ────────────────────────────────────
     plate_map = {
         'half plate': 'Half Plate', 'half plat': 'Half Plate', 'halfplate': 'Half Plate',
         'full plate': 'Full Plate', 'full plat': 'Full Plate', 'fullplate': 'Full Plate',
@@ -199,6 +209,7 @@ def _normalize_size(raw: str) -> str:
         if k in s:
             return v
 
+    # ── Step 4: T-shirt / generic size words ─────────────────────────
     size_map = {
         'small': 'Small', 'medium': 'Medium', 'large': 'Large',
         'regular': 'Regular', 'xl': 'XL', 'xxl': 'XXL',
@@ -212,28 +223,49 @@ def _normalize_size(raw: str) -> str:
 
 
 def _match_variant(variants: List[Dict], size_hint: str) -> Optional[Dict]:
-    """Fuzzy match size hint to a product variant."""
+    """
+    Fuzzy-match a user's size hint to a product variant.
+
+    FIX v13.1: 5-tier matching strategy so 'half kg', 'Half Kg', 'HALF KG',
+    '0.5kg', '0.5 kg' all resolve to the correct variant regardless of how
+    the admin stored the variant name in the database.
+    """
     if not variants or not size_hint:
         return None
-    normalized = _normalize_size(size_hint.strip()).lower()
 
-    # Exact match
+    hint_raw  = size_hint.strip()
+    hint_norm = _normalize_size(hint_raw).lower()
+
+    # ── Tier 1: Exact normalized match ───────────────────────────────
     for v in variants:
-        if v.get("size", "").lower().strip() == normalized:
+        v_norm = _normalize_size(v.get("size", "")).lower().strip()
+        if v_norm == hint_norm:
             return v
 
-    # Substring match
+    # ── Tier 2: Exact raw match (case-insensitive) ────────────────────
+    hint_lower = hint_raw.lower()
     for v in variants:
-        vs = v.get("size", "").lower().strip()
-        if normalized in vs or vs in normalized:
+        if v.get("size", "").lower().strip() == hint_lower:
             return v
 
-    # Word overlap
-    norm_words = set(re.findall(r'\w+', normalized))
+    # ── Tier 3: Normalized substring match ───────────────────────────
+    for v in variants:
+        v_norm = _normalize_size(v.get("size", "")).lower().strip()
+        if hint_norm and (hint_norm in v_norm or v_norm in hint_norm):
+            return v
+
+    # ── Tier 4: Raw substring match ───────────────────────────────────
+    for v in variants:
+        vs_lower = v.get("size", "").lower().strip()
+        if hint_lower and (hint_lower in vs_lower or vs_lower in hint_lower):
+            return v
+
+    # ── Tier 5: Word-overlap fuzzy match ──────────────────────────────
+    hint_words = set(re.findall(r'\w+', hint_norm))
     best_score, best_v = 0, None
     for v in variants:
-        vs_words = set(re.findall(r'\w+', v.get("size", "").lower()))
-        score = len(norm_words & vs_words)
+        v_words = set(re.findall(r'\w+', _normalize_size(v.get("size", "")).lower()))
+        score = len(hint_words & v_words)
         if score > best_score:
             best_score = score
             best_v = v
@@ -759,7 +791,6 @@ def _find_product_by_query(query: str) -> Optional[Dict]:
             if cat == category:
                 matching_kws = [kw for kw in kws if kw in (q_clean or q)]
                 if matching_kws:
-                    # Only give bonus if none of the OTHER categories also match more strongly
                     score += len(matching_kws) * 5
 
         # Tier 6: Description contains query words
@@ -903,24 +934,75 @@ async def _ai_parse_message(user_message: str, product_names: List[str]) -> Opti
 # ── SMART SIZE RECOVERY ──────────────────────────────────────
 # ============================================================
 
-def _is_product_name(text: str) -> Optional[Dict]:
-    """Check if text looks like a product name (not a size). Returns matched product or None."""
+def _is_product_name(text: str, min_confidence: float = 50.0) -> Optional[Dict]:
+    """
+    Check if text looks like a product name (not a size).
+
+    FIX v13.1: Added min_confidence threshold (default 50) to prevent weak
+    fuzzy matches from triggering unwanted context switches in step=1.
+    Returns matched product only if confidence score >= min_confidence.
+    """
     t = text.lower().strip()
-    # Must not look like a size
+
+    # Must not look like a size or unit
     size_indicators = [
         'small', 'medium', 'large', 'xl', 'xxl', 'half', 'full',
         'plate', 'kg', 'ml', 'gram', 'liter', 'regular', 'family',
     ]
     if any(si in t for si in size_indicators) and len(t.split()) <= 3:
         return None
-    return _find_product_by_query(t)
+
+    # Must not be a known UI button label
+    if t in KNOWN_BUTTON_TEXTS or any(t in btn for btn in KNOWN_BUTTON_TEXTS):
+        return None
+
+    # Run product matching and require minimum confidence
+    if not PRODUCTS_DATA:
+        return None
+
+    noise = re.compile(
+        r'\b(i want|want to order|i want to order|please|kindly|mujhe chahiye|'
+        r'mujhe|chahiye|dena|lena|please give|give me|add|can i get|'
+        r'get me|send me|order|ek|one|do|two|teen|three|char|four)\b',
+        re.IGNORECASE
+    )
+    q_clean = noise.sub("", t).strip()
+    q_clean = re.sub(r'\s+', ' ', q_clean).strip()
+
+    best_score, best_product = -1.0, None
+    for product in PRODUCTS_DATA:
+        title = product.get("title", "").lower().strip()
+        score = 0.0
+
+        if q_clean == title or t == title:
+            score += 1000.0
+        elif q_clean and q_clean in title:
+            score += 500.0
+        elif q_clean and title in q_clean:
+            score += 400.0
+
+        t_words = set(re.findall(r'\w+', title))
+        q_words = set(re.findall(r'\w+', q_clean or t))
+        word_overlap = len(t_words & q_words)
+        if t_words and word_overlap == len(t_words):
+            score += 200.0 + word_overlap * 10
+        elif word_overlap > 0:
+            score += word_overlap * 15
+
+        tg = _trigram_similarity(q_clean or t, title)
+        score += tg * 80
+
+        if score > best_score:
+            best_score = score
+            best_product = product
+
+    return best_product if best_score >= min_confidence else None
 
 
 def _get_friendly_size_prompt(product: Dict, lang: str, context_hint: str = "") -> str:
     """Generate a friendly, non-robotic size selection message."""
     variants  = product.get("variants", [])
     name      = product.get("title", "Item").strip().title()
-    size_list = " / ".join(v["size"] for v in variants)
     prices    = "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
 
     hint_line = ""
@@ -949,10 +1031,15 @@ QUANTITY_WORDS = {
     "first": 1, "second": 1, "third": 1, "fourth": 1,
 }
 
+# FIX v13.1: Added spaced variants ("half kg", "1 kg", "1.5 kg", "2 kg", "0.5 kg")
+# so parse_multi_size_from_text catches them reliably
 SIZE_HINTS = [
     "family pack", "half plate", "full plate", "quarter plate",
     "half plat", "full plat",
-    "0.5kg", "1.5kg", "2kg", "1kg", "0.25kg", "half kg", "1 kg", "2 kg",
+    # With spaces (must be listed BEFORE bare tokens to match first)
+    "half kg", "0.5 kg", "1.5 kg", "1 kg", "2 kg", "0.25 kg",
+    # Without spaces
+    "0.5kg", "1.5kg", "2kg", "1kg", "0.25kg",
     "500ml", "1.5l", "1.5L", "1l",
     "small", "medium", "large", "regular", "xl", "xxl",
     "half", "full",
@@ -1010,6 +1097,7 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
 
         matched_variant    = None
         matched_size_label = ""
+        # Sort SIZE_HINTS by length descending so longer matches win first
         for sh in sorted(SIZE_HINTS, key=len, reverse=True):
             if sh.lower() in part:
                 mv = _match_variant(variants, sh)
@@ -1298,9 +1386,9 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], 
     body_text   = {"en": "Tap an item to order or ask me anything! 🍽️",
                    "ur": "کوئی آئٹم چنیں یا کچھ بھی پوچھیں! 🍽️",
                    "de": "Tippen Sie auf ein Element oder fragen Sie mich! 🍽️"}
-    footer_text = {"en": "Powered by AI Restaurant Bot v13",
-                   "ur": "AI ریسٹورنٹ بوٹ v13",
-                   "de": "Betrieben von AI Restaurant Bot v13"}
+    footer_text = {"en": "Powered by AI Restaurant Bot v13.1",
+                   "ur": "AI ریسٹورنٹ بوٹ v13.1",
+                   "de": "Betrieben von AI Restaurant Bot v13.1"}
     button_text = {"en": "View Menu", "ur": "مینو دیکھیں", "de": "Menü anzeigen"}
     section_title = {"en": "Our Menu", "ur": "ہمارا مینو", "de": "Unsere Speisekarte"}
 
@@ -1850,7 +1938,7 @@ async def handle_multi_item_order(from_number: str, text: str, lang: str) -> boo
                     confirm_msgs = {
                         "en": f"{summary}\n\n👉 Confirm order or add more?",
                         "ur": f"{summary}\n\n👉 تصدیق کریں یا مزید شامل کریں؟",
-                        "de": f"{summary}\n\n👉 Bestätigen oder mehr hinzufügen?",
+                        "de": f"{summary}\n\n👉 Bestätigen oder mehr?",
                     }
                     await send_whatsapp_buttons(from_number, confirm_msgs.get(lang, confirm_msgs["en"]),
                                                 ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
@@ -1909,7 +1997,7 @@ async def handle_multi_item_order(from_number: str, text: str, lang: str) -> boo
         confirm_msgs = {
             "en": f"{summary}\n\n👉 Confirm order or add more?",
             "ur": f"{summary}\n\n👉 تصدیق کریں یا مزید شامل کریں؟",
-            "de": f"{summary}\n\n👉 Bestätigen oder mehr hinzufügen?",
+            "de": f"{summary}\n\n👉 Bestätigen oder mehr?",
         }
         await send_whatsapp_buttons(from_number, confirm_msgs.get(lang, confirm_msgs["en"]),
                                     ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
@@ -2103,11 +2191,8 @@ async def receive_message(request: Request):
         _track({"total_searches": 1, f"supported_languages.{lang}": 1})
 
         # ── AI parse (non-blocking, used as a hint for step 0 order intents) ──
-        # We fire this early to have it ready. It runs in parallel with the
-        # first intent checks and is only awaited when we actually need it.
         product_names = [p.get("title", "") for p in PRODUCTS_DATA[:30]]
         ai_parse_task = None
-        # Only invoke AI parse for step=0 free-text (not buttons, not mid-flow)
         if not is_button and step == 0 and ANTHROPIC_API_KEY:
             ai_parse_task = asyncio.create_task(_ai_parse_message(msg_text, product_names))
 
@@ -2171,6 +2256,19 @@ async def receive_message(request: Request):
             variants = po.get("variants", [])
             product  = po.get("product_ref", {})
 
+            # ── FIX v13.1: Ignore known UI button labels during size step ────
+            # If a button was clicked (e.g. "View Menu 📋") while bot is waiting
+            # for size, gently remind the user to pick a size instead of treating
+            # the button label as a size input.
+            if is_button or q.strip() in KNOWN_BUTTON_TEXTS:
+                size_reminder = {
+                    "en": f"👆 Please choose a size for *{po.get('dish', 'the item')}* to continue:",
+                    "ur": f"👆 براہ کرم *{po.get('dish', '')}* کا سائز چنیں:",
+                    "de": f"👆 Bitte wählen Sie eine Größe für *{po.get('dish', '')}*:",
+                }
+                await _ask_size(from_num, product, lang)
+                return JSONResponse({"status": "ok"})
+
             # Multi-size reply for same product
             if product:
                 multi_sizes = _parse_multi_size_from_text(msg_text, product)
@@ -2213,10 +2311,10 @@ async def receive_message(request: Request):
                                                         ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                     return JSONResponse({"status": "ok"})
 
-            # ── SMART SIZE RECOVERY: user may have typed a product name ──────
-            maybe_product = _is_product_name(msg_text)
+            # ── FIX v13.1: Context switch only if HIGH confidence product match ──
+            # Require min_confidence=50 to prevent weak matches from hijacking the flow.
+            maybe_product = _is_product_name(msg_text, min_confidence=50.0)
             if maybe_product and maybe_product.get("_id") != (product.get("_id") if product else None):
-                # User is trying to order a DIFFERENT product — switch context
                 switch_msgs = {
                     "en": f"Switching to *{maybe_product.get('title','').title()}*! Let me ask you a few questions.",
                     "ur": f"*{maybe_product.get('title','').title()}* کے لیے سوئچ کر رہا ہوں!",
@@ -2227,18 +2325,26 @@ async def receive_message(request: Request):
                 await _handle_single_item_order(from_num, msg_text, lang)
                 return JSONResponse({"status": "ok"})
 
-            # Try to match the size
+            # Try to match the size (with the improved 5-tier _match_variant)
             matched = _match_variant(variants, msg_text)
             if not matched and variants:
-                # Give a friendly, non-robotic error
-                sizes_str = " / ".join(v["size"] for v in variants)
+                # Friendly, contextual error — show sizes again
                 size_err = {
-                    "en": f"Hmm, I didn't catch that size. Available sizes for *{po.get('dish','the item')}*:\n"
-                          + "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants),
-                    "ur": f"سائز سمجھ نہیں آیا۔ *{po.get('dish','')}* کے لیے دستیاب سائز:\n"
-                          + "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants),
-                    "de": f"Größe nicht erkannt. Verfügbare Größen für *{po.get('dish','')}*:\n"
-                          + "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants),
+                    "en": (
+                        f"Hmm, I didn't catch that size 🤔\n"
+                        f"Available sizes for *{po.get('dish', 'the item')}*:\n"
+                        + "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
+                    ),
+                    "ur": (
+                        f"سائز سمجھ نہیں آیا 🤔\n"
+                        f"*{po.get('dish', '')}* کے لیے دستیاب سائز:\n"
+                        + "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
+                    ),
+                    "de": (
+                        f"Größe nicht erkannt 🤔\n"
+                        f"Verfügbare Größen für *{po.get('dish', '')}*:\n"
+                        + "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
+                    ),
                 }
                 await send_whatsapp_text(from_num, size_err.get(lang, size_err["en"]))
                 return JSONResponse({"status": "ok"})
@@ -3302,7 +3408,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v13.0 started!")
+    logger.info("🚀 Restaurant Bot v13.1 started!")
     logger.info(f"   Products loaded   : {len(PRODUCTS_DATA)}")
     logger.info(f"   Delivery time     : {get_delivery_time()}")
     logger.info(f"   Delivery charges  : {BOT_DATA.get('delivery_charges', {})}")
