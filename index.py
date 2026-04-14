@@ -1,34 +1,31 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v13.0)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.0)
 ===============================================================
-v13.0 fixes & enhancements over v12.0:
+v14.0 fixes & enhancements over v13.0:
 
-  ✅ FIX G: "✅ Order Now" button now correctly resumes the pending product
-             stored in session["last_shown_product"]. No more "I'm not sure"
-             fallback when user taps Order Now after seeing item sizes.
+  ✅ FIX 1: Karahi (and ALL dish/category names) now correctly trigger
+             the order flow. The PRODUCT_KEYWORD_INDEX now maps every
+             keyword to a LIST of matching products, not just the first.
+             _find_product_by_query uses best-match scoring across the list.
 
-  ✅ FIX H: Smart keyword matching — ALL dish names, categories, and aliases
-             are auto-indexed from PRODUCTS_DATA at startup so the bot
-             recognises any product mention without hardcoded lists.
+  ✅ FIX 2: Greeting check moved AFTER product-name detection so that
+             dish names like "karahi", "biryani", "burger" are never
+             swallowed by the greeting handler.
 
-  ✅ FIX I: Human-friendly NLP — the bot now handles:
-             • Casual phrasing: "give me a pizza", "I'll have biryani",
-               "bhai ek burger dena", "kuch meetha chahiye"
-             • Affirmative continuations: "yes", "sure", "haan", "theek hai"
-               correctly resume the active product flow instead of going to
-               confirm-order.
-             • Clarification questions: "what sizes do you have?",
-               "tell me about your biryani", "kaisa biryani hai?"
-             • Polite chit-chat: greetings mid-order, "thank you", etc.
+  ✅ FIX 3: CATEGORY_KEYWORDS and aliases are dynamically derived from
+             the actual product catalogue at startup — no hardcoded lists
+             that go stale. Every product title word (>2 chars) is indexed.
 
-  ✅ FIX J: Multi-order in one message fully robust:
-             "1 half biryani aur 2 xl pizza aur 1 small burger"
-             all parsed and queued correctly even with Urdu conjunctions.
+  ✅ FIX 4: Single-word dish queries (e.g. "karahi", "biryani") are now
+             detected as order intent even without explicit order words,
+             if a product match is found.
 
-  ✅ FIX K: "Order Now" / "Order Again" button stores + retrieves the last
-             confirmed order items for instant reorder.
+  ✅ FIX 5: _is_affirmative() now correctly distinguishes between
+             "yes, proceed with order" and greetings like "hi"/"hello".
 
-  ✅ KEEP: All v12.0 fixes 100% preserved (A–F).
+  ✅ KEEP: All v13.0 fixes 100% preserved (A–K).
+  ✅ KEEP: Multi-order handling fully intact.
+  ✅ KEEP: All step flows (1,2,3,4,5,6,10,20,30) fully intact.
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -52,13 +49,13 @@ from difflib import SequenceMatcher
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v13")
+logger = logging.getLogger("RestaurantBot.v14")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
 
-# FIX H: Auto-built product keyword index { keyword_lower: product_dict }
-PRODUCT_KEYWORD_INDEX: Dict[str, Dict] = {}
+# v14 FIX 1: keyword → LIST of products (not just the first)
+PRODUCT_KEYWORD_INDEX: Dict[str, List[Dict]] = {}
 
 # In-memory session store
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
@@ -79,8 +76,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v13.0",
-    version="13.0",
+    title="WhatsApp AI Restaurant Bot v14.0",
+    version="14.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -369,54 +366,91 @@ def _is_valid_address(text: str) -> bool:
     return len(stripped) >= 18
 
 # ============================================================
-# DATA LOADER + FIX H: Auto product keyword index
+# DATA LOADER + v14 FIX 1: Dynamic product keyword index
 # ============================================================
+
+# v14: Universal aliases that apply to any product whose category/title matches
+_UNIVERSAL_CATEGORY_ALIASES: Dict[str, List[str]] = {
+    "burger":  ["burger", "brgr", "برگر", "zinger", "cheeseburger", "double burger"],
+    "pizza":   ["pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice", "tikka pizza"],
+    "biryani": ["biryani", "بریانی", "baryani", "rice dish", "dum biryani",
+                "chicken biryani", "beef biryani", "mutton biryani"],
+    "drinks":  ["drink", "مشروب", "cola", "juice", "coke", "pepsi", "lassi",
+                "cold drink", "soda", "7up", "sprite", "fanta", "water", "سافٹ ڈرنک"],
+    "dessert": ["dessert", "مٹھائی", "sweet", "cake", "kheer", "meetha",
+                "halwa", "gulab jamun", "brownie", "mithai"],
+    "karahi":  ["karahi", "کڑاہی", "karai", "karhai", "chicken karahi",
+                "beef karahi", "mutton karahi", "dum karahi"],
+    "rice":    ["rice", "چاول", "pulao", "fried rice", "plov"],
+    "rolls":   ["roll", "رول", "shawarma", "wrap", "paratha roll"],
+    "chicken": ["chicken", "چکن", "murgh"],
+    "beef":    ["beef", "گوشت", "gosht"],
+    "mutton":  ["mutton", "lamb", "دنبہ"],
+    "soup":    ["soup", "شوربہ", "shorba"],
+    "salad":   ["salad", "سلاد"],
+    "bread":   ["bread", "naan", "roti", "paratha", "روٹی", "نان", "پراٹھا"],
+    "shawarma":["shawarma", "شوارمہ"],
+    "sandwich":["sandwich", "سینڈوچ", "sub"],
+    "pasta":   ["pasta", "پاستا", "spaghetti", "macaroni"],
+    "steak":   ["steak", "اسٹیک", "grilled"],
+    "fish":    ["fish", "مچھلی", "seafood", "prawn", "shrimp"],
+}
+
 
 def _build_product_keyword_index():
     """
-    Auto-index every product by all meaningful words in its title, category,
-    description, and any aliases. Called after PRODUCTS_DATA is loaded.
+    v14: Build keyword → [list of products] index.
+    Every product is indexed under:
+      - its full title (exact)
+      - each meaningful word in its title
+      - its category name
+      - all universal aliases matching its category
+      - all meaningful words in its description
     """
     global PRODUCT_KEYWORD_INDEX
     PRODUCT_KEYWORD_INDEX = {}
 
+    def _add(key: str, product: Dict):
+        key = key.lower().strip()
+        if not key or len(key) < 2:
+            return
+        if key not in PRODUCT_KEYWORD_INDEX:
+            PRODUCT_KEYWORD_INDEX[key] = []
+        # Avoid duplicates
+        pid = str(product.get("_id", id(product)))
+        if not any(str(p.get("_id", id(p))) == pid for p in PRODUCT_KEYWORD_INDEX[key]):
+            PRODUCT_KEYWORD_INDEX[key].append(product)
+
     for product in PRODUCTS_DATA:
-        title    = product.get("title", "")
-        category = product.get("category", "")
-        desc     = product.get("description", "")
+        title    = product.get("title", "").strip()
+        category = product.get("category", "").strip().lower()
+        desc     = product.get("description", "").strip()
 
-        # Full title as a key
-        PRODUCT_KEYWORD_INDEX[title.lower().strip()] = product
+        # Full title
+        _add(title, product)
 
-        # Each word of title (>2 chars)
+        # Each word in title (>2 chars)
         for word in re.findall(r'\w+', title.lower()):
             if len(word) > 2:
-                PRODUCT_KEYWORD_INDEX.setdefault(word, product)
+                _add(word, product)
 
-        # Category
+        # Category name
         if category:
-            PRODUCT_KEYWORD_INDEX.setdefault(category.lower().strip(), product)
+            _add(category, product)
 
-        # Common aliases for each category
-        aliases = {
-            "burger":  ["burger", "brgr", "برگر", "zinger", "cheeseburger"],
-            "pizza":   ["pizza", "پیزا", "پیزہ", "margherita", "pepperoni"],
-            "biryani": ["biryani", "بریانی", "baryani", "rice dish", "dum biryani"],
-            "drinks":  ["drink", "مشروب", "cola", "juice", "coke", "pepsi", "lassi",
-                        "cold drink", "soda", "7up", "sprite", "fanta"],
-            "dessert": ["dessert", "مٹھائی", "sweet", "cake", "kheer", "meetha",
-                        "halwa", "gulab jamun"],
-            "karahi":  ["karahi", "کڑاہی", "karai", "karhai"],
-            "rice":    ["rice", "چاول", "pulao", "fried rice"],
-            "rolls":   ["roll", "رول", "shawarma", "wrap", "paratha roll"],
-        }
-        cat_lower = category.lower()
-        for cat, kws in aliases.items():
-            if cat == cat_lower or cat in desc.lower():
-                for kw in kws:
-                    PRODUCT_KEYWORD_INDEX.setdefault(kw, product)
+        # Universal aliases for this category
+        for cat_key, aliases in _UNIVERSAL_CATEGORY_ALIASES.items():
+            if cat_key == category or cat_key in title.lower() or cat_key in desc.lower():
+                for alias in aliases:
+                    _add(alias, product)
 
-    logger.info(f"Product keyword index built: {len(PRODUCT_KEYWORD_INDEX)} keys")
+        # Meaningful words from description
+        for word in re.findall(r'\w+', desc.lower()):
+            if len(word) > 3:
+                _add(word, product)
+
+    logger.info(f"Product keyword index built: {len(PRODUCT_KEYWORD_INDEX)} keys "
+                f"across {len(PRODUCTS_DATA)} products")
 
 
 def load_data_realtime():
@@ -606,20 +640,33 @@ def detect_language(text: str, session_lang: str = "en") -> str:
 # KEYWORD DATABASES
 # ============================================================
 
+# v14: CATEGORY_KEYWORDS built dynamically at runtime from PRODUCT_KEYWORD_INDEX
+# but we keep a static fallback for intent detection before products load
 CATEGORY_KEYWORDS = {
-    "burger":  ["burger", "برگر", "brgr", "cheeseburger", "double burger", "zinger"],
-    "pizza":   ["pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice", "tikka pizza"],
-    "biryani": ["biryani", "بریانی", "dum biryani", "chicken biryani", "beef biryani", "baryani"],
-    "drinks":  ["drink", "مشروب", "juice", "cola", "water", "سافٹ ڈرنک", "lassi",
-                "coke", "pepsi", "7up", "sprite", "fanta", "soda", "cold drink"],
-    "dessert": ["dessert", "مٹھائی", "cake", "kheer", "halwa", "gulab jamun", "brownie",
-                "meetha", "sweet", "mithai"],
-    "karahi":  ["karahi", "کڑاہی", "chicken karahi", "beef karahi", "mutton karahi", "karhai"],
-    "rice":    ["rice", "چاول", "pulao", "plov", "fried rice"],
-    "rolls":   ["roll", "رول", "shawarma", "wrap", "paratha roll"],
+    "burger":   ["burger", "برگر", "brgr", "cheeseburger", "double burger", "zinger"],
+    "pizza":    ["pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice", "tikka pizza"],
+    "biryani":  ["biryani", "بریانی", "dum biryani", "chicken biryani", "beef biryani", "baryani"],
+    "drinks":   ["drink", "مشروب", "juice", "cola", "water", "سافٹ ڈرنک", "lassi",
+                 "coke", "pepsi", "7up", "sprite", "fanta", "soda", "cold drink"],
+    "dessert":  ["dessert", "مٹھائی", "cake", "kheer", "halwa", "gulab jamun", "brownie",
+                 "meetha", "sweet", "mithai"],
+    "karahi":   ["karahi", "کڑاہی", "chicken karahi", "beef karahi", "mutton karahi", "karhai",
+                 "dum karahi"],
+    "rice":     ["rice", "چاول", "pulao", "plov", "fried rice"],
+    "rolls":    ["roll", "رول", "shawarma", "wrap", "paratha roll"],
+    "chicken":  ["chicken", "چکن", "murgh"],
+    "beef":     ["beef", "گوشت"],
+    "mutton":   ["mutton", "lamb"],
+    "fish":     ["fish", "مچھلی", "seafood", "prawn"],
+    "bread":    ["naan", "roti", "paratha", "bread", "روٹی", "نان"],
+    "shawarma": ["shawarma", "شوارمہ"],
+    "pasta":    ["pasta", "پاستا", "spaghetti"],
+    "sandwich": ["sandwich", "سینڈوچ", "sub"],
+    "soup":     ["soup", "شوربہ", "shorba"],
+    "salad":    ["salad", "سلاد"],
+    "steak":    ["steak", "اسٹیک", "grilled"],
 }
 
-# FIX I: Expanded human-friendly intent keywords
 INTENT_KEYWORDS = {
     "discount":  ["discount", "sale", "deal", "offer", "cheap", "سستا", "رعایت", "rabatt",
                   "special offer", "promo", "coupon"],
@@ -627,7 +674,7 @@ INTENT_KEYWORDS = {
                   "chahiye", "dena", "lena", "add", "mujhe", "give me", "i'll have",
                   "i'd like", "can i get", "get me", "send me", "bhai dena", "yaar dena",
                   "ek dena", "do dena", "lao", "manga", "mangwao", "order karo",
-                  "order now", "order again"],
+                  "order now", "order again", "want to order", "want"],
     "menu":      ["menu", "مینو", "menü", "what do you have", "show menu", "list", "items",
                   "all items", "show all", "kya hai", "kya milta", "aapke paas kya",
                   "what's available", "what do you serve", "show items"],
@@ -665,14 +712,12 @@ INTENT_KEYWORDS = {
         "delivery charges", "kitna delivery", "free delivery", "delivery free",
         "ڈلیوری چارج", "ڈلیوری فیس", "liefergebühr",
     ],
-    # FIX I: inquiry intent — user wants info, not to order
     "inquiry": [
         "tell me about", "what is", "describe", "kya hai", "kaisa hai",
         "batao", "bataiye", "details", "more info", "information about",
         "what sizes", "what flavors", "what options", "kaunse size",
         "kya varieties", "available sizes",
     ],
-    # FIX I: thanks / chit-chat
     "thanks": [
         "thank", "thanks", "thankyou", "thank you", "shukriya", "شکریہ",
         "jazakallah", "jazak allah", "great", "awesome", "perfect", "excellent",
@@ -699,9 +744,7 @@ def _default_session() -> Dict[str, Any]:
         "frequent_items":      [],
         "last_address":        None,
         "order_count":         0,
-        # FIX G: store last shown product for "Order Now" button
         "last_shown_product":  None,
-        # FIX K: store last confirmed order items for reorder
         "last_order_items":    [],
     }
 
@@ -769,13 +812,13 @@ SIZE_HINTS = [
     "half", "full",
 ]
 
-# FIX I: Noise prefixes for cleaning order text
 _ORDER_NOISE_PREFIXES = re.compile(
-    r'^(i\s+want\s+to\s+order|i\s+want|want\s+to\s+order|please\s+give\s+me|'
-    r'please|kindly|mujhe\s+chahiye|mujhe|chahiye|dena|lena|please\s+give|'
-    r'give\s+me|add|can\s+i\s+get|get\s+me|send\s+me|i\'ll\s+have|'
-    r'i\s+would\s+like|i\'d\s+like|bhai\s+dena|yaar\s+dena|bhai|yaar|'
-    r'kuch|ek|do|teen|mujhe\s+ek|mujhe\s+do|lao|la\s+do|mangwao)\s+',
+    r'^(i\s+want\s+to\s+order|i\s+want\s+to|i\s+want|want\s+to\s+order|'
+    r'please\s+give\s+me|please|kindly|mujhe\s+chahiye|mujhe|chahiye|'
+    r'dena|lena|please\s+give|give\s+me|add|can\s+i\s+get|get\s+me|'
+    r'send\s+me|i\'ll\s+have|i\s+would\s+like|i\'d\s+like|bhai\s+dena|'
+    r'yaar\s+dena|bhai|yaar|lao|la\s+do|mangwao|order\s+karo|'
+    r'mujhe\s+ek|mujhe\s+do|ek|do|teen)\s+',
     re.IGNORECASE,
 )
 
@@ -793,52 +836,113 @@ def _extract_quantity(token: str) -> int:
 
 def _find_product_by_query(query: str) -> Optional[Dict]:
     """
-    FIX H: Check auto-built keyword index first (O(1) for exact matches),
-    then fall back to scoring for partial/fuzzy matches.
+    v14: Uses PRODUCT_KEYWORD_INDEX (keyword → list) and picks the best
+    matching product via scoring. Works for ANY dish in the catalogue.
     """
-    q = query.lower().strip()
+    if not query:
+        return None
 
-    # Strip noise prefixes
+    q = query.lower().strip()
     q_clean = _ORDER_NOISE_PREFIXES.sub("", q).strip()
 
-    # 1. Exact index lookup
-    if q_clean in PRODUCT_KEYWORD_INDEX:
-        return PRODUCT_KEYWORD_INDEX[q_clean]
-    if q in PRODUCT_KEYWORD_INDEX:
-        return PRODUCT_KEYWORD_INDEX[q]
+    # Collect candidate products from index
+    candidates: Dict[str, Dict] = {}  # pid → product
 
-    # 2. Check each word in query against index
+    def _add_candidate(p: Dict):
+        pid = str(p.get("_id", id(p)))
+        candidates[pid] = p
+
+    # 1. Exact full-query match
+    for lookup in [q_clean, q]:
+        if lookup in PRODUCT_KEYWORD_INDEX:
+            for p in PRODUCT_KEYWORD_INDEX[lookup]:
+                _add_candidate(p)
+
+    # 2. Each word in query
     words = re.findall(r'\w+', q_clean)
-    for word in sorted(words, key=len, reverse=True):
+    for word in words:
         if len(word) > 2 and word in PRODUCT_KEYWORD_INDEX:
-            return PRODUCT_KEYWORD_INDEX[word]
+            for p in PRODUCT_KEYWORD_INDEX[word]:
+                _add_candidate(p)
 
-    # 3. Scoring fallback
-    best_score, best_product = 0, None
-    for product in PRODUCTS_DATA:
+    # If no candidates from index, try all products
+    if not candidates:
+        for p in PRODUCTS_DATA:
+            candidates[str(p.get("_id", id(p)))] = p
+
+    if not candidates:
+        return None
+
+    # Score each candidate
+    def _score(product: Dict) -> float:
         title    = product.get("title", "").lower()
         category = product.get("category", "").lower()
-        score    = 0
+        desc     = product.get("description", "").lower()
+        score    = 0.0
 
+        # Exact title match
+        if q_clean == title or q == title:
+            score += 20
+
+        # Query contained in title
         if q_clean in title or title in q_clean:
             score += 10
+
+        # Word overlap with title
         q_words = set(re.findall(r"\w+", q_clean))
         t_words = set(re.findall(r"\w+", title))
-        score  += len(q_words & t_words) * 3
+        overlap = q_words & t_words
+        score += len(overlap) * 4
 
+        # Category keyword match
         for cat, kws in CATEGORY_KEYWORDS.items():
             if cat == category and any(kw in q_clean for kw in kws):
-                score += 5
+                score += 6
 
-        for word in t_words:
-            if word in q_clean and len(word) > 3:
-                score += 2
+        # Category name directly in query
+        if category and category in q_clean:
+            score += 8
 
-        if score > best_score:
-            best_score   = score
-            best_product = product
+        # Description word overlap
+        d_words = set(re.findall(r"\w+", desc))
+        score += len(q_words & d_words) * 1
+
+        # Trending & rating boost
+        score += float(product.get("trending_score", 0)) * 0.5
+        score += float(product.get("rating", 0)) * 0.3
+
+        return score
+
+    best_product = max(candidates.values(), key=_score)
+    best_score   = _score(best_product)
 
     return best_product if best_score > 0 else None
+
+
+def _is_product_query(q: str) -> bool:
+    """
+    v14 FIX 4: Returns True if the query matches any known product keyword,
+    even without explicit order words. This lets single-word dish names
+    like 'karahi', 'biryani', 'burger' trigger the order flow.
+    """
+    q_clean = _ORDER_NOISE_PREFIXES.sub("", q.lower().strip()).strip()
+    words   = re.findall(r'\w+', q_clean)
+
+    # Check each word against the index
+    for word in words:
+        if len(word) > 2 and word in PRODUCT_KEYWORD_INDEX:
+            return True
+
+    # Check full query
+    if q_clean in PRODUCT_KEYWORD_INDEX:
+        return True
+
+    # Check all category keyword lists
+    for kws in CATEGORY_KEYWORDS.values():
+        if any(kw in q_clean for kw in kws):
+            return True
+
+    return False
 
 
 def _products_by_category(category_key: str) -> List[Dict]:
@@ -952,7 +1056,6 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
     return results
 
 
-# FIX J: Expanded separators to handle Urdu + mixed messages
 _MULTI_ITEM_SEPARATORS = re.compile(
     r'\b(?:and|aur|or|also|پھر|اور|saath|ke\s+saath|plus)\b|[,;+\.\n]',
     re.IGNORECASE
@@ -1105,8 +1208,8 @@ def create_order_from_cart(
     _track(inc)
 
     session = get_user_session(user_id)
-    session["order_count"]    = session.get("order_count", 0) + 1
-    session["last_order_items"] = cart_items  # FIX K: store for reorder
+    session["order_count"]      = session.get("order_count", 0) + 1
+    session["last_order_items"] = cart_items
 
     return str(result.inserted_id)
 
@@ -1230,9 +1333,9 @@ async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], 
     body_text   = {"en": "Tap an item to order or ask me anything! 🍽️",
                    "ur": "کوئی آئٹم چنیں یا کچھ بھی پوچھیں! 🍽️",
                    "de": "Tippen Sie auf ein Element oder fragen Sie mich! 🍽️"}
-    footer_text = {"en": "Powered by AI Restaurant Bot v13",
-                   "ur": "AI ریسٹورنٹ بوٹ v13",
-                   "de": "Betrieben von AI Restaurant Bot v13"}
+    footer_text = {"en": "Powered by AI Restaurant Bot v14",
+                   "ur": "AI ریسٹورنٹ بوٹ v14",
+                   "de": "Betrieben von AI Restaurant Bot v14"}
     button_text = {"en": "View Menu", "ur": "مینو دیکھیں", "de": "Menü anzeigen"}
     section_title = {"en": "Our Menu", "ur": "ہمارا مینو", "de": "Unsere Speisekarte"}
 
@@ -1309,7 +1412,10 @@ def _detect_category_from_query(q: str) -> Optional[str]:
 
 
 def _is_affirmative(q: str) -> bool:
-    """FIX I: Detect affirmative responses that mean 'yes, proceed'."""
+    """
+    v14 FIX 5: Only pure affirmative responses — not greetings.
+    'yes', 'ok', 'sure' are affirmatives; 'hi', 'hello' are greetings.
+    """
     affirmatives = {
         "yes", "sure", "ok", "okay", "haan", "theek hai", "bilkul",
         "zaroor", "absolutely", "go ahead", "proceed", "yep", "yeah",
@@ -1318,8 +1424,23 @@ def _is_affirmative(q: str) -> bool:
     return q.strip().lower() in affirmatives
 
 
+def _is_pure_greeting(q: str) -> bool:
+    """Returns True ONLY if the message is purely a greeting with no dish/product name."""
+    greeting_only = {
+        "hi", "hello", "hey", "salam", "assalam", "aoa", "aslam",
+        "hallo", "guten tag", "good morning", "good evening", "good afternoon",
+        "as salam", "walaikum", "start", "begin",
+    }
+    q_stripped = q.strip().lower()
+    if q_stripped in greeting_only:
+        return True
+    # Multi-word pure greeting
+    if any(kw in q_stripped for kw in greeting_only) and not _is_product_query(q_stripped):
+        return True
+    return False
+
+
 def _is_order_now_button(q: str) -> bool:
-    """FIX G: Detect the Order Now / Order Again button taps."""
     cleaned = re.sub(r'[✅📋🛒🔄]', '', q).strip().lower()
     return cleaned in {"order now", "order again", "reorder"}
 
@@ -1668,7 +1789,11 @@ async def _handle_full_price_display(from_number: str, q: str, lang: str):
         emoji_map = {
             "pizza": "🍕", "burger": "🍔", "biryani": "🍛",
             "drinks": "🥤", "karahi": "🥘", "dessert": "🍰",
-            "rice": "🍚", "rolls": "🌯",
+            "rice": "🍚", "rolls": "🌯", "chicken": "🍗",
+            "beef": "🥩", "mutton": "🍖", "fish": "🐟",
+            "soup": "🍲", "salad": "🥗", "bread": "🫓",
+            "pasta": "🍝", "steak": "🥩", "shawarma": "🌯",
+            "sandwich": "🥪",
         }
         emoji = emoji_map.get(category, "🍽️")
         title_map = {
@@ -1881,10 +2006,9 @@ async def receive_message(request: Request):
         if not is_button:
             session["lang"] = lang
 
-        q    = msg_text.lower().strip()
-        # Remove emoji/special chars for cleaner matching
+        q       = msg_text.lower().strip()
         q_clean = re.sub(r'[^\w\s\u0600-\u06FF]', '', q).strip()
-        step = session.get("step", 0)
+        step    = session.get("step", 0)
 
         _track({"total_searches": 1, f"supported_languages.{lang}": 1})
 
@@ -1919,7 +2043,6 @@ async def receive_message(request: Request):
             last_product = session.get("last_shown_product")
             last_items   = session.get("last_order_items", [])
 
-            # "Order Again" — reorder previous items
             if "again" in q or "reorder" in q:
                 if last_items:
                     session["cart"] = list(last_items)
@@ -1935,14 +2058,12 @@ async def receive_message(request: Request):
                                                 ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                     return JSONResponse({"status": "ok"})
 
-            # "Order Now" — resume the last shown product
             if last_product:
                 reset_for_new_order(session)
                 handled = await _handle_single_item_order(from_num, last_product.get("title", ""), lang)
                 if handled:
                     return JSONResponse({"status": "ok"})
 
-            # Fallback — ask what they want
             ask_what = {
                 "en": "Sure! What would you like to order? 🍽️\n(Type any dish name or 'show menu')",
                 "ur": "ضرور! کیا آرڈر کرنا ہے؟ 🍽️\n(ڈش کا نام لکھیں یا 'مینو دکھائیں')",
@@ -1983,9 +2104,9 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # FIX I: Thanks / chit-chat mid-flow
+        # Thanks mid-flow (step 0 only)
         # ═══════════════════════════════════════════════════════
-        if any(kw in q for kw in INTENT_KEYWORDS["thanks"]) and step == 0:
+        if any(kw in q for kw in INTENT_KEYWORDS["thanks"]) and step == 0 and not _is_product_query(q):
             thanks_msg = {
                 "en": "You're welcome! 😊 Anything else I can help with?\n\n• *Show menu* — view all items\n• *Place order* — order food",
                 "ur": "خوشی ہوئی! 😊 اور کچھ چاہیے؟\n\n• *مینو دکھائیں* — سب آئٹم\n• *آرڈر دیں* — کھانا آرڈر کریں",
@@ -1995,7 +2116,7 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # STEP 1 — User picks SIZE (single item flow)
+        # STEP 1 — SIZE
         # ═══════════════════════════════════════════════════════
         if step == 1:
             po       = session.get("pending_order", {})
@@ -2087,7 +2208,7 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # STEP 2 — User picks SPICE
+        # STEP 2 — SPICE
         # ═══════════════════════════════════════════════════════
         if step == 2:
             po            = session.get("pending_order", {})
@@ -2122,7 +2243,7 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # STEP 3 — User picks EXTRAS
+        # STEP 3 — EXTRAS
         # ═══════════════════════════════════════════════════════
         if step == 3:
             po             = session.get("pending_order", {})
@@ -2589,16 +2710,6 @@ async def receive_message(request: Request):
         # STEP 0 — Normal intent routing
         # ═══════════════════════════════════════════════════════
 
-        # ── Greeting ──────────────────────────────────────────
-        if any(kw in q for kw in INTENT_KEYWORDS["greeting"]):
-            greeting = BOT_DATA.get("initial_message", {}).get(lang, "Welcome! 🍽️ How can I help you?")
-            sugs     = get_suggestions(from_num, lang)
-            reply    = greeting
-            if sugs:
-                reply += "\n\n💡 " + "\n• ".join(sugs)
-            await send_whatsapp_buttons(from_num, reply, ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"])
-            return JSONResponse({"status": "ok"})
-
         # ── Delivery charge inquiry ────────────────────────────
         if any(kw in q for kw in INTENT_KEYWORDS["delivery_charge"]):
             dc         = BOT_DATA.get("delivery_charges", {})
@@ -2685,21 +2796,24 @@ async def receive_message(request: Request):
             await send_whatsapp_text(from_num, addr_prompt.get(lang, addr_prompt["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── MIXED INTENT: order + price display ────────────────
-        order_intent  = any(kw in q for kw in INTENT_KEYWORDS["order"])
-        price_intent  = _detect_price_menu_intent(q)
-        menu_intent   = any(kw in q for kw in INTENT_KEYWORDS["menu"])
+        # ── MIXED INTENT: price display ────────────────────────
+        order_intent   = any(kw in q for kw in INTENT_KEYWORDS["order"])
+        price_intent   = _detect_price_menu_intent(q)
+        menu_intent    = any(kw in q for kw in INTENT_KEYWORDS["menu"])
         inquiry_intent = any(kw in q for kw in INTENT_KEYWORDS["inquiry"])
-        multi_signals = ["and", "aur", "+", "also", "ke saath", "اور", "saath", "plus"]
-        is_multi      = any(s in q for s in multi_signals)
+        multi_signals  = ["and", "aur", "+", "also", "ke saath", "اور", "saath", "plus"]
+        is_multi       = any(s in q for s in multi_signals)
+
+        # v14 FIX 4: detect product name even without explicit order words
+        product_query  = _is_product_query(q)
 
         if price_intent:
             _track({"total_searches": 1})
             await _handle_full_price_display(from_num, q, lang)
-            if not order_intent:
+            if not order_intent and not product_query:
                 return JSONResponse({"status": "ok"})
 
-        # ── FIX I: Inquiry about a dish (not an order) ─────────
+        # ── Inquiry about a dish (not ordering) ───────────────
         if inquiry_intent and not order_intent:
             product = _find_product_by_query(msg_text)
             if product:
@@ -2723,14 +2837,14 @@ async def receive_message(request: Request):
                 order_q = {"en": "\nWould you like to order? 😊", "ur": "\nکیا آرڈر کرنا ہے؟ 😊", "de": "\nMöchten Sie bestellen? 😊"}.get(lang, "\nWould you like to order? 😊")
                 reply_parts.append(order_q)
 
-                # FIX G: store as last_shown_product
                 session["last_shown_product"] = product
                 await send_whatsapp_buttons(from_num, "\n".join(reply_parts),
                                             ["✅ Order Now", "📋 View Menu"])
                 return JSONResponse({"status": "ok"})
 
-        # ── Order intent ───────────────────────────────────────
-        if order_intent or is_multi or re.search(r'\d+\s*(?:kg|ml|l\b|g\b)', q):
+        # ── Order intent OR direct product name ────────────────
+        # v14 FIX 4: product_query alone (no explicit order word) is enough
+        if order_intent or product_query or is_multi or re.search(r'\d+\s*(?:kg|ml|l\b|g\b)', q):
             _track({"total_cart_additions": 1})
             if is_multi or re.search(r'\d+\s*(?:kg|ml|l\b|g\b)', q):
                 handled = await handle_multi_item_order(from_num, msg_text, lang)
@@ -2780,7 +2894,8 @@ async def receive_message(request: Request):
                 dish_name    = latest.get("dish") or (latest.get("items", [{}])[0].get("title", "Order"))
                 dish_name    = dish_name.strip().title()
                 status       = latest.get("status", "Pending")
-                status_emoji = {"Pending": "⏳", "Accepted": "✅", "Processing": "👨‍🍳", "Delivered": "🚗", "Rejected": "❌"}.get(status, "📦")
+                status_emoji = {"Pending": "⏳", "Accepted": "✅", "Processing": "👨‍🍳",
+                                 "Delivered": "🚗", "Rejected": "❌"}.get(status, "📦")
                 st = {
                     "en": f"{status_emoji} Your latest order (*{dish_name}*): *{status}*\n🔖 ID: #{str(latest.get('_id', ''))[-6:]}",
                     "ur": f"{status_emoji} آپ کے آخری آرڈر کی حالت (*{dish_name}*): *{status}*\n🔖 نمبر: #{str(latest.get('_id', ''))[-6:]}",
@@ -2796,13 +2911,23 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, no_order.get(lang, no_order["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── Product name search (FIX H: index-powered) ─────────
+        # ── v14 FIX 2: Greeting — AFTER product-name check ────
+        # Only show greeting if the message is purely a greeting (no dish name)
+        if _is_pure_greeting(q):
+            greeting = BOT_DATA.get("initial_message", {}).get(lang, "Welcome! 🍽️ How can I help you?")
+            sugs     = get_suggestions(from_num, lang)
+            reply    = greeting
+            if sugs:
+                reply += "\n\n💡 " + "\n• ".join(sugs)
+            await send_whatsapp_buttons(from_num, reply, ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"])
+            return JSONResponse({"status": "ok"})
+
+        # ── Product name search (index-powered) ────────────────
         matched_product = _find_product_by_query(msg_text)
         if matched_product:
             product_name = matched_product.get("title", "Item").strip().title()
             variants     = matched_product.get("variants", [])
 
-            # FIX G: Always store last shown product
             session["last_shown_product"] = matched_product
 
             if variants:
@@ -3310,7 +3435,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v13.0 started!")
+    logger.info("🚀 Restaurant Bot v14.0 started!")
     logger.info(f"   Products loaded    : {len(PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(BOT_DATA.get('faq', {}).keys())}")
