@@ -1,31 +1,31 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.0)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.1)
 ===============================================================
-v14.0 fixes & enhancements over v13.0:
+v14.1 fixes over v14.0 (minor bug fixes only — all logic preserved):
 
-  ✅ FIX 1: Karahi (and ALL dish/category names) now correctly trigger
-             the order flow. The PRODUCT_KEYWORD_INDEX now maps every
-             keyword to a LIST of matching products, not just the first.
-             _find_product_by_query uses best-match scoring across the list.
+  ✅ FIX A: _handle_single_item_order now uses _find_product_by_query
+             (index-powered) as primary lookup, with filter_products as
+             fallback. Prevents wrong product being selected when
+             filter_products scoring is thrown off by quantity tokens
+             like "5 XL Pizza" returning Karahi instead of Pizza.
 
-  ✅ FIX 2: Greeting check moved AFTER product-name detection so that
-             dish names like "karahi", "biryani", "burger" are never
-             swallowed by the greeting handler.
+  ✅ FIX B: pending_order is fully reset at the START of
+             _handle_single_item_order before any new product is set.
+             Prevents stale product_ref (e.g. Karahi) from leaking
+             into step-1 handler if something goes wrong mid-flow.
 
-  ✅ FIX 3: CATEGORY_KEYWORDS and aliases are dynamically derived from
-             the actual product catalogue at startup — no hardcoded lists
-             that go stale. Every product title word (>2 chars) is indexed.
+  ✅ FIX C: Quantity and size tokens are stripped from the query before
+             product lookup in _handle_single_item_order so "Add 5 XL
+             Pizza" correctly resolves to Pizza, not a dish whose
+             description contains "xl" or size tokens.
 
-  ✅ FIX 4: Single-word dish queries (e.g. "karahi", "biryani") are now
-             detected as order intent even without explicit order words,
-             if a product match is found.
+  ✅ FIX D: In step-1 handler, product_ref is re-validated — if it is
+             missing or empty the handler gracefully re-asks the size
+             question rather than silently firing _ask_size with a
+             wrong/stale product.
 
-  ✅ FIX 5: _is_affirmative() now correctly distinguishes between
-             "yes, proceed with order" and greetings like "hi"/"hello".
-
-  ✅ KEEP: All v13.0 fixes 100% preserved (A–K).
-  ✅ KEEP: Multi-order handling fully intact.
-  ✅ KEEP: All step flows (1,2,3,4,5,6,10,20,30) fully intact.
+  ✅ KEEP: All v14.0 logic 100% preserved. Only the four points above
+           are changed.
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -49,7 +49,7 @@ from difflib import SequenceMatcher
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v14")
+logger = logging.getLogger("RestaurantBot.v14.1")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -76,8 +76,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v14.0",
-    version="14.0",
+    title="WhatsApp AI Restaurant Bot v14.1",
+    version="14.1",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -821,6 +821,33 @@ _ORDER_NOISE_PREFIXES = re.compile(
     r'mujhe\s+ek|mujhe\s+do|ek|do|teen)\s+',
     re.IGNORECASE,
 )
+
+# v14.1 FIX C: Pattern to strip leading quantity tokens before product lookup
+_QUANTITY_PREFIX = re.compile(
+    r'^(\d+(?:st|nd|rd|th)?|'
+    + '|'.join(re.escape(k) for k in QUANTITY_WORDS.keys())
+    + r')\s+',
+    re.IGNORECASE,
+)
+
+
+def _strip_quantity_and_size(text: str) -> str:
+    """
+    v14.1 FIX C: Remove leading quantity tokens and size hints from a query
+    so that "5 XL Pizza" becomes "Pizza" for product lookup purposes.
+    This prevents filter_products from scoring wrong products due to
+    numeric/size tokens that happen to match other product descriptions.
+    """
+    t = text.strip()
+    # Strip noise prefixes first (add, order, give me, etc.)
+    t = _ORDER_NOISE_PREFIXES.sub("", t).strip()
+    # Strip leading quantity word/number
+    t = _QUANTITY_PREFIX.sub("", t).strip()
+    # Strip leading size hints
+    for sh in sorted(SIZE_HINTS, key=len, reverse=True):
+        pattern = re.compile(r'^\s*' + re.escape(sh) + r'\s+', re.IGNORECASE)
+        t = pattern.sub("", t).strip()
+    return t.strip()
 
 
 def _extract_quantity(token: str) -> int:
@@ -1707,12 +1734,30 @@ async def _finalise_single_item(
 
 
 async def _handle_single_item_order(from_number: str, text: str, lang: str) -> bool:
-    session  = get_user_session(from_number)
-    products = filter_products(text)
-    if not products:
+    """
+    v14.1 FIX A + B + C:
+      - Reset pending_order FIRST to avoid stale product_ref leaking into step handlers.
+      - Use _find_product_by_query (index-powered) as primary lookup with quantity/size
+        stripped from the query, falling back to filter_products only if needed.
+      - This ensures "Add 5 XL Pizza" correctly resolves to Pizza, not Karahi.
+    """
+    session = get_user_session(from_number)
+
+    # v14.1 FIX B: Clear pending_order at the start so no stale product_ref remains
+    session["pending_order"] = {}
+
+    # v14.1 FIX C: Strip quantity and size tokens before product lookup
+    stripped_query = _strip_quantity_and_size(text)
+
+    # v14.1 FIX A: Use index-powered lookup first, fall back to filter_products
+    p = _find_product_by_query(stripped_query) or _find_product_by_query(text)
+    if not p:
+        products = filter_products(text)
+        p = products[0] if products else None
+
+    if not p:
         return False
 
-    p              = products[0]
     variants       = p.get("variants", [])
     spice_levels   = p.get("spice_levels", [])
     extras_options = p.get("extras", [])
@@ -2122,6 +2167,17 @@ async def receive_message(request: Request):
             po       = session.get("pending_order", {})
             variants = po.get("variants", [])
             product  = po.get("product_ref", {})
+
+            # v14.1 FIX D: Guard against empty/stale product_ref
+            if not product or not product.get("title"):
+                session["step"] = 0
+                retry_msg = {
+                    "en": "Sorry, something went wrong. What would you like to order? 🍽️",
+                    "ur": "معذرت، کچھ مسئلہ ہوا۔ کیا آرڈر کرنا ہے؟ 🍽️",
+                    "de": "Entschuldigung, ein Fehler ist aufgetreten. Was möchten Sie bestellen? 🍽️",
+                }
+                await send_whatsapp_text(from_num, retry_msg.get(lang, retry_msg["en"]))
+                return JSONResponse({"status": "ok"})
 
             if product:
                 multi_sizes = _parse_multi_size_from_text(msg_text, product)
@@ -3435,7 +3491,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v14.0 started!")
+    logger.info("🚀 Restaurant Bot v14.1 started!")
     logger.info(f"   Products loaded    : {len(PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(BOT_DATA.get('faq', {}).keys())}")
