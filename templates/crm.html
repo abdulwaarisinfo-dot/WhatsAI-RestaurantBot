@@ -3,10 +3,13 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>RestaurantBot CRM v12</title>
+<title>RestaurantBot CRM v14.1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<!-- Leaflet map -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════
    DESIGN TOKENS
@@ -72,29 +75,14 @@ input, select, textarea { font-family: inherit; outline: none; }
   box-shadow: var(--sh-lg);
   animation: fadeSlideUp .4s cubic-bezier(.22,1,.36,1);
 }
-.lc-logo {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 28px;
-}
-.lc-icon {
-  width: 38px; height: 38px; border-radius: 10px;
-  background: var(--accent); display: flex; align-items: center;
-  justify-content: center; font-size: 18px; flex-shrink: 0;
-}
+.lc-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+.lc-icon { width: 38px; height: 38px; border-radius: 10px; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
 .lc-title { font-size: 18px; font-weight: 700; line-height: 1.2; }
 .lc-sub { font-size: 12px; color: var(--muted); font-weight: 400; }
 .lc label { display: block; font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
-.lc input {
-  width: 100%; border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 10px 12px; font-size: 13px;
-  color: var(--text); background: var(--surface2); margin-bottom: 14px;
-  transition: border-color .15s, box-shadow .15s;
-}
+.lc input { width: 100%; border: 1.5px solid var(--border); border-radius: var(--r-sm); padding: 10px 12px; font-size: 13px; color: var(--text); background: var(--surface2); margin-bottom: 14px; transition: border-color .15s, box-shadow .15s; }
 .lc input:focus { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px rgba(26,86,219,.1); }
-.lc-btn {
-  width: 100%; background: var(--accent); color: #fff;
-  border-radius: var(--r-sm); padding: 11px; font-size: 13px; font-weight: 600;
-  letter-spacing: .02em; transition: all .15s; margin-top: 4px;
-}
+.lc-btn { width: 100%; background: var(--accent); color: #fff; border-radius: var(--r-sm); padding: 11px; font-size: 13px; font-weight: 600; letter-spacing: .02em; transition: all .15s; margin-top: 4px; }
 .lc-btn:hover { background: var(--accent-h); box-shadow: 0 4px 12px rgba(26,86,219,.3); transform: translateY(-1px); }
 .lc-btn:active { transform: scale(.98); }
 .lc-err { display: none; color: var(--red); font-size: 12px; font-weight: 500; text-align: center; margin-top: 10px; }
@@ -107,81 +95,36 @@ input, select, textarea { font-family: inherit; outline: none; }
 /* ═══════════════════════════════════════════════════
    SIDEBAR
 ═══════════════════════════════════════════════════ */
-.sidebar {
-  position: fixed; top: 0; left: 0;
-  width: var(--sidebar-w); height: 100vh;
-  background: var(--surface); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; z-index: 200;
-  transition: transform .25s cubic-bezier(.22,1,.36,1);
-}
-.sb-head {
-  padding: 16px 16px 14px;
-  border-bottom: 1px solid var(--border2);
-  display: flex; align-items: center; gap: 10px;
-}
-.sb-icon {
-  width: 32px; height: 32px; background: var(--accent);
-  border-radius: 8px; display: flex; align-items: center;
-  justify-content: center; font-size: 15px; flex-shrink: 0;
-}
+.sidebar { position: fixed; top: 0; left: 0; width: var(--sidebar-w); height: 100vh; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 200; transition: transform .25s cubic-bezier(.22,1,.36,1); }
+.sb-head { padding: 16px 16px 14px; border-bottom: 1px solid var(--border2); display: flex; align-items: center; gap: 10px; }
+.sb-icon { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
 .sb-name { font-size: 13px; font-weight: 700; color: var(--text); }
 .sb-ver { font-size: 10px; color: var(--muted); font-weight: 500; }
 .sb-nav { flex: 1; overflow-y: auto; padding: 8px 0; }
 .sb-section { padding: 12px 12px 4px; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
-.nav-item {
-  display: flex; align-items: center; gap: 9px;
-  padding: 8px 12px; margin: 1px 6px; border-radius: var(--r-sm);
-  font-size: 13px; font-weight: 500; color: var(--text2);
-  cursor: pointer; transition: all .12s; position: relative;
-  user-select: none;
-}
+.nav-item { display: flex; align-items: center; gap: 9px; padding: 8px 12px; margin: 1px 6px; border-radius: var(--r-sm); font-size: 13px; font-weight: 500; color: var(--text2); cursor: pointer; transition: all .12s; position: relative; user-select: none; }
 .nav-item:hover { background: var(--bg); color: var(--text); }
 .nav-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .nav-item svg { width: 15px; height: 15px; flex-shrink: 0; }
-.nav-badge {
-  margin-left: auto; background: var(--red); color: #fff;
-  border-radius: 10px; font-size: 10px; font-weight: 700;
-  padding: 1px 6px; display: none; animation: pulseBadge 1.5s ease infinite;
-}
+.nav-badge { margin-left: auto; background: var(--red); color: #fff; border-radius: 10px; font-size: 10px; font-weight: 700; padding: 1px 6px; display: none; animation: pulseBadge 1.5s ease infinite; }
 @keyframes pulseBadge { 0%,100%{opacity:1} 50%{opacity:.6} }
-.sb-foot {
-  padding: 12px 14px; border-top: 1px solid var(--border2);
-  font-size: 11px; color: var(--muted);
-  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; gap: 4px;
-}
+.sb-foot { padding: 12px 14px; border-top: 1px solid var(--border2); font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .dot-online { width: 7px; height: 7px; background: var(--green); border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px rgba(13,158,106,.2); }
-.sb-overlay {
-  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
-  z-index: 150; backdrop-filter: blur(2px);
-}
+.sb-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 150; backdrop-filter: blur(2px); }
 .sb-overlay.open { display: block; }
-.menu-toggle {
-  display: none; position: fixed; top: 14px; left: 14px; z-index: 300;
-  width: 36px; height: 36px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-sm); align-items: center; justify-content: center;
-  box-shadow: var(--sh); cursor: pointer; font-size: 16px;
-}
+.menu-toggle { display: none; position: fixed; top: 14px; left: 14px; z-index: 300; width: 36px; height: 36px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); align-items: center; justify-content: center; box-shadow: var(--sh); cursor: pointer; font-size: 16px; }
 
 /* ═══════════════════════════════════════════════════
    MAIN CONTENT
 ═══════════════════════════════════════════════════ */
-.main {
-  margin-left: var(--sidebar-w);
-  height: 100vh; overflow-y: auto;
-  padding: 28px 28px 40px;
-  background: var(--bg);
-}
+.main { margin-left: var(--sidebar-w); height: 100vh; overflow-y: auto; padding: 28px 28px 40px; background: var(--bg); }
 .page { display: none; }
 .page.active { display: block; animation: fadeSlideUp .2s ease; }
 
 /* ═══════════════════════════════════════════════════
    PAGE HEADER
 ═══════════════════════════════════════════════════ */
-.ph {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
-}
-.ph-left {}
+.ph { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
 .ph-title { font-size: 22px; font-weight: 800; letter-spacing: -.02em; color: var(--text); }
 .ph-title span { color: var(--muted); font-weight: 400; }
 .ph-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
@@ -191,11 +134,7 @@ input, select, textarea { font-family: inherit; outline: none; }
    STAT CARDS
 ═══════════════════════════════════════════════════ */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
-.sc {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 18px 20px; box-shadow: var(--sh);
-  transition: box-shadow .15s, transform .15s;
-}
+.sc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; box-shadow: var(--sh); transition: box-shadow .15s, transform .15s; }
 .sc:hover { box-shadow: var(--sh-md); transform: translateY(-1px); }
 .sc-icon { font-size: 20px; margin-bottom: 12px; }
 .sc-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
@@ -205,15 +144,8 @@ input, select, textarea { font-family: inherit; outline: none; }
 /* ═══════════════════════════════════════════════════
    CARD
 ═══════════════════════════════════════════════════ */
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 20px; box-shadow: var(--sh);
-  margin-bottom: 16px;
-}
-.card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 16px; gap: 12px;
-}
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; box-shadow: var(--sh); margin-bottom: 16px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; }
 .card-title { font-size: 13px; font-weight: 700; color: var(--text); }
 .card-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -222,12 +154,7 @@ input, select, textarea { font-family: inherit; outline: none; }
 /* ═══════════════════════════════════════════════════
    BUTTONS
 ═══════════════════════════════════════════════════ */
-.btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  border-radius: var(--r-sm); font-size: 12px; font-weight: 600;
-  padding: 8px 16px; transition: all .15s; cursor: pointer;
-  letter-spacing: .01em; white-space: nowrap;
-}
+.btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--r-sm); font-size: 12px; font-weight: 600; padding: 8px 16px; transition: all .15s; cursor: pointer; letter-spacing: .01em; white-space: nowrap; }
 .btn svg { width: 13px; height: 13px; flex-shrink: 0; }
 .btn-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); box-shadow: 0 2px 8px rgba(26,86,219,.2); }
 .btn-primary:hover { background: var(--accent-h); box-shadow: 0 4px 14px rgba(26,86,219,.3); transform: translateY(-1px); }
@@ -249,16 +176,8 @@ input, select, textarea { font-family: inherit; outline: none; }
 ═══════════════════════════════════════════════════ */
 .tbl-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
-th {
-  text-align: left; font-size: 11px; font-weight: 600;
-  color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
-  padding: 8px 14px; border-bottom: 1px solid var(--border);
-  background: var(--surface2); white-space: nowrap;
-}
-td {
-  padding: 11px 14px; font-size: 13px; color: var(--text);
-  border-bottom: 1px solid var(--border2); vertical-align: middle;
-}
+th { text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+td { padding: 11px 14px; font-size: 13px; color: var(--text); border-bottom: 1px solid var(--border2); vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--bg); }
 .mono-text { font-family: var(--mono); font-size: 11px; color: var(--muted); }
@@ -266,11 +185,7 @@ tr:hover td { background: var(--bg); }
 /* ═══════════════════════════════════════════════════
    STATUS PILLS
 ═══════════════════════════════════════════════════ */
-.pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  border-radius: 20px; font-size: 11px; font-weight: 600;
-  padding: 3px 9px; white-space: nowrap;
-}
+.pill { display: inline-flex; align-items: center; gap: 4px; border-radius: 20px; font-size: 11px; font-weight: 600; padding: 3px 9px; white-space: nowrap; }
 .pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .6; }
 .pill-Pending { background: var(--amber-bg); color: var(--amber); }
 .pill-Accepted { background: var(--accent-bg); color: var(--accent); }
@@ -284,18 +199,10 @@ tr:hover td { background: var(--bg); }
 .fg { display: flex; flex-direction: column; gap: 5px; }
 .fg.full { grid-column: 1 / -1; }
 .fl { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; }
-.fi {
-  border: 1.5px solid var(--border); border-radius: var(--r-sm);
-  padding: 9px 11px; font-size: 13px; color: var(--text);
-  background: var(--surface2); transition: border-color .15s, box-shadow .15s;
-}
+.fi { border: 1.5px solid var(--border); border-radius: var(--r-sm); padding: 9px 11px; font-size: 13px; color: var(--text); background: var(--surface2); transition: border-color .15s, box-shadow .15s; }
 .fi:focus { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px rgba(26,86,219,.08); }
 .fi::placeholder { color: var(--muted); }
-select.fi {
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238890A4' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
-}
+select.fi { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238890A4' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
 textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .fi-hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
@@ -305,53 +212,27 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 ═══════════════════════════════════════════════════ */
 .search-wrap { position: relative; }
 .search-wrap svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 13px; height: 13px; color: var(--muted); pointer-events: none; }
-.search-input {
-  border: 1px solid var(--border); border-radius: var(--r-sm);
-  padding: 7px 10px 7px 30px; font-size: 12px; color: var(--text);
-  background: var(--surface); width: 200px; transition: all .2s;
-  box-shadow: var(--sh);
-}
+.search-input { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 7px 10px 7px 30px; font-size: 12px; color: var(--text); background: var(--surface); width: 200px; transition: all .2s; box-shadow: var(--sh); }
 .search-input:focus { border-color: var(--accent); width: 230px; }
 
 /* ═══════════════════════════════════════════════════
    FILTER TABS
 ═══════════════════════════════════════════════════ */
 .ftabs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 16px; }
-.ftab {
-  padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text2);
-  cursor: pointer; transition: all .12s;
-}
+.ftab { padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--text2); cursor: pointer; transition: all .12s; }
 .ftab:hover { color: var(--text); border-color: var(--text2); }
 .ftab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ═══════════════════════════════════════════════════
    MODAL
 ═══════════════════════════════════════════════════ */
-.modal-bg {
-  position: fixed; inset: 0; background: rgba(0,0,0,.4);
-  z-index: 500; display: none; align-items: center; justify-content: center;
-  backdrop-filter: blur(3px); padding: 16px;
-}
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 500; display: none; align-items: center; justify-content: center; backdrop-filter: blur(3px); padding: 16px; }
 .modal-bg.open { display: flex; }
-.modal {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-xl); width: 580px; max-width: 100%;
-  max-height: 90vh; overflow-y: auto;
-  box-shadow: var(--sh-lg); animation: fadeSlideUp .2s ease;
-}
-.modal-hd {
-  padding: 22px 24px 0;
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-}
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); width: 580px; max-width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: var(--sh-lg); animation: fadeSlideUp .2s ease; }
+.modal-hd { padding: 22px 24px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .modal-title { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .modal-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.modal-close {
-  width: 28px; height: 28px; border-radius: var(--r-sm);
-  background: var(--bg); border: 1px solid var(--border);
-  font-size: 14px; color: var(--muted); flex-shrink: 0;
-  transition: all .12s; cursor: pointer;
-}
+.modal-close { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--bg); border: 1px solid var(--border); font-size: 14px; color: var(--muted); flex-shrink: 0; transition: all .12s; cursor: pointer; }
 .modal-close:hover { background: var(--red-bg); color: var(--red); border-color: #FECACA; }
 .modal-body { padding: 20px 24px; }
 .modal-ft { padding: 0 24px 20px; display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--border2); padding-top: 16px; }
@@ -360,10 +241,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
    MODAL TABS
 ═══════════════════════════════════════════════════ */
 .mtabs { display: flex; border-bottom: 1px solid var(--border2); margin-bottom: 20px; }
-.mtab {
-  padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--muted);
-  cursor: pointer; border-bottom: 2px solid transparent; transition: all .12s; margin-bottom: -1px;
-}
+.mtab { padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all .12s; margin-bottom: -1px; }
 .mtab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .mtab-panel { display: none; }
 .mtab-panel.active { display: block; }
@@ -372,17 +250,9 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
    PRODUCTS GRID
 ═══════════════════════════════════════════════════ */
 .products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
-.product-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); overflow: hidden;
-  box-shadow: var(--sh); transition: all .15s;
-}
+.product-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; box-shadow: var(--sh); transition: all .15s; }
 .product-card:hover { box-shadow: var(--sh-md); transform: translateY(-2px); }
-.pc-img {
-  height: 120px; background: var(--surface2);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 40px; overflow: hidden; border-bottom: 1px solid var(--border2);
-}
+.pc-img { height: 120px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 40px; overflow: hidden; border-bottom: 1px solid var(--border2); }
 .pc-img img { width: 100%; height: 100%; object-fit: cover; }
 .pc-body { padding: 12px; }
 .pc-cat { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin-bottom: 3px; }
@@ -392,15 +262,8 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 .pc-actions { display: flex; gap: 6px; align-items: center; }
 .avail-toggle { position: relative; width: 32px; height: 18px; flex-shrink: 0; }
 .avail-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-.avail-slider {
-  position: absolute; inset: 0; background: var(--border);
-  border-radius: 10px; cursor: pointer; transition: background .2s;
-}
-.avail-slider::before {
-  content: ''; position: absolute; width: 12px; height: 12px;
-  border-radius: 50%; background: #fff; left: 3px; top: 3px;
-  transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2);
-}
+.avail-slider { position: absolute; inset: 0; background: var(--border); border-radius: 10px; cursor: pointer; transition: background .2s; }
+.avail-slider::before { content: ''; position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #fff; left: 3px; top: 3px; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .avail-toggle input:checked + .avail-slider { background: var(--green); }
 .avail-toggle input:checked + .avail-slider::before { transform: translateX(14px); }
 
@@ -408,45 +271,23 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
    ORDER CARDS
 ═══════════════════════════════════════════════════ */
 .orders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
-.order-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 16px; box-shadow: var(--sh);
-  transition: box-shadow .15s;
-}
+.order-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; box-shadow: var(--sh); transition: box-shadow .15s; }
 .order-card:hover { box-shadow: var(--sh-md); }
-.order-card.is-new {
-  border-color: var(--amber);
-  animation: blink-card 1.5s ease-in-out 4;
-}
-@keyframes blink-card {
-  0%, 100% { box-shadow: var(--sh); }
-  50% { box-shadow: 0 0 0 3px rgba(196,122,0,.15), var(--sh-md); }
-}
+.order-card.is-new { border-color: var(--amber); animation: blink-card 1.5s ease-in-out 4; }
+@keyframes blink-card { 0%, 100% { box-shadow: var(--sh); } 50% { box-shadow: 0 0 0 3px rgba(196,122,0,.15), var(--sh-md); } }
 .oc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; gap: 8px; }
 .oc-id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .oc-time { font-size: 11px; color: var(--muted); text-align: right; }
 .oc-phone { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
 .oc-items { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.oc-item {
-  display: flex; align-items: flex-start; gap: 8px;
-  background: var(--surface2); border: 1px solid var(--border2);
-  border-radius: var(--r-sm); padding: 7px 9px;
-}
-.oc-qty {
-  font-family: var(--mono); font-size: 10px; font-weight: 600;
-  background: var(--accent-bg); color: var(--accent);
-  border-radius: 4px; padding: 2px 6px; flex-shrink: 0;
-}
+.oc-item { display: flex; align-items: flex-start; gap: 8px; background: var(--surface2); border: 1px solid var(--border2); border-radius: var(--r-sm); padding: 7px 9px; }
+.oc-qty { font-family: var(--mono); font-size: 10px; font-weight: 600; background: var(--accent-bg); color: var(--accent); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
 .oc-item-info { flex: 1; min-width: 0; }
 .oc-item-name { font-size: 12px; font-weight: 600; }
 .oc-item-meta { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .oc-item-price { font-family: var(--mono); font-size: 11px; font-weight: 600; flex-shrink: 0; }
 .oc-more { font-size: 11px; color: var(--muted); padding: 4px 8px; font-weight: 500; }
-.oc-total {
-  display: flex; justify-content: space-between; align-items: center;
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 8px 10px; margin-bottom: 10px;
-}
+.oc-total { display: flex; justify-content: space-between; align-items: center; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; margin-bottom: 10px; }
 .oc-total-label { font-size: 11px; font-weight: 600; color: var(--muted); }
 .oc-total-val { font-family: var(--mono); font-size: 14px; font-weight: 700; }
 .oc-addr { font-size: 11px; color: var(--muted); margin-bottom: 10px; display: flex; gap: 5px; line-height: 1.4; }
@@ -456,19 +297,12 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
    ORDER DETAIL MODAL
 ═══════════════════════════════════════════════════ */
 .od-section { margin-bottom: 18px; }
-.od-section-title {
-  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
-  color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
-}
+.od-section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
 .od-section-title::before { content: ''; width: 3px; height: 10px; background: var(--accent); border-radius: 2px; display: block; }
 .od-row { display: flex; gap: 10px; margin-bottom: 6px; }
 .od-label { font-size: 12px; color: var(--muted); font-weight: 500; min-width: 90px; flex-shrink: 0; }
 .od-val { font-size: 13px; color: var(--text); word-break: break-all; }
-.od-total-box {
-  background: var(--accent); color: #fff; border-radius: var(--r-sm);
-  padding: 12px 14px; display: flex; justify-content: space-between; align-items: center;
-  margin-top: 10px;
-}
+.od-total-box { background: var(--accent); color: #fff; border-radius: var(--r-sm); padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
 
 /* ═══════════════════════════════════════════════════
    ANALYTICS BARS
@@ -483,37 +317,21 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 /* ═══════════════════════════════════════════════════
    FAQ ITEMS
 ═══════════════════════════════════════════════════ */
-.faq-item {
-  border: 1px solid var(--border); border-radius: var(--r-sm);
-  padding: 14px; margin-bottom: 10px;
-}
-.faq-key {
-  font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .07em; color: var(--accent); margin-bottom: 12px;
-  display: flex; align-items: center; gap: 5px;
-}
+.faq-item { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 14px; margin-bottom: 10px; }
+.faq-key { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 5px; }
 .faq-key::before { content: ''; width: 3px; height: 11px; background: var(--accent); border-radius: 2px; display: block; }
 
 /* ═══════════════════════════════════════════════════
    LANG TABS
 ═══════════════════════════════════════════════════ */
 .ltabs { display: flex; gap: 5px; margin-bottom: 14px; }
-.ltab {
-  padding: 5px 12px; border-radius: var(--r-sm); font-size: 11px; font-weight: 600;
-  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
-  cursor: pointer; transition: all .12s;
-}
+.ltab { padding: 5px 12px; border-radius: var(--r-sm); font-size: 11px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; transition: all .12s; }
 .ltab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ═══════════════════════════════════════════════════
    TAG CHIPS
 ═══════════════════════════════════════════════════ */
-.chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: 20px; font-size: 11px; font-weight: 500;
-  padding: 3px 10px; cursor: pointer; transition: all .12s; color: var(--text2);
-}
+.chip { display: inline-flex; align-items: center; gap: 5px; background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; font-weight: 500; padding: 3px 10px; cursor: pointer; transition: all .12s; color: var(--text2); }
 .chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
 .chip.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
 
@@ -522,60 +340,120 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 ═══════════════════════════════════════════════════ */
 .vrow { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
 .vrow .fi { flex: 1; }
-
-/* ═══════════════════════════════════════════════════
-   SUGGESTION ROWS
-═══════════════════════════════════════════════════ */
 .sug-row { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
 .sug-row .fi { flex: 1; }
 
 /* ═══════════════════════════════════════════════════
    EMPTY STATE
 ═══════════════════════════════════════════════════ */
-.empty {
-  text-align: center; padding: 48px 24px;
-  color: var(--muted); font-size: 13px;
-}
+.empty { text-align: center; padding: 48px 24px; color: var(--muted); font-size: 13px; }
 .empty-icon { font-size: 32px; margin-bottom: 10px; opacity: .35; }
 .empty-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 
 /* ═══════════════════════════════════════════════════
    TOAST
 ═══════════════════════════════════════════════════ */
-#toast {
-  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 10px 16px; font-size: 13px; font-weight: 500;
-  box-shadow: var(--sh-lg); display: flex; align-items: center; gap: 8px;
-  max-width: 300px; transform: translateY(70px); opacity: 0;
-  transition: transform .3s cubic-bezier(.22,1,.36,1), opacity .3s;
-  pointer-events: none;
-}
+#toast { position: fixed; bottom: 20px; right: 20px; z-index: 9999; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 16px; font-size: 13px; font-weight: 500; box-shadow: var(--sh-lg); display: flex; align-items: center; gap: 8px; max-width: 300px; transform: translateY(70px); opacity: 0; transition: transform .3s cubic-bezier(.22,1,.36,1), opacity .3s; pointer-events: none; }
 #toast.show { transform: translateY(0); opacity: 1; }
 #toast.err { border-color: #FECACA; }
 #toast.ok { border-color: #6EE7B7; }
 
 /* ═══════════════════════════════════════════════════
-   DELIVERY CHARGE TABLE
+   AREA ROW
 ═══════════════════════════════════════════════════ */
-.area-row { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
-.area-row .fi { flex: 1; }
+.area-row { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; }
+.area-row .fi { flex: 1; background: var(--surface); }
+.area-row-label { font-size: 12px; font-weight: 500; color: var(--text); flex: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.area-row-charge { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent); }
+.area-pill-free { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--green); background: var(--green-bg); border-radius: 4px; padding: 1px 7px; }
+
+/* ═══════════════════════════════════════════════════
+   MAP
+═══════════════════════════════════════════════════ */
+#delivery-map {
+  width: 100%; height: 480px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  box-shadow: var(--sh-md);
+}
+.map-search-bar {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
+}
+.map-search-bar input {
+  flex: 1; border: 1.5px solid var(--border); border-radius: var(--r-sm);
+  padding: 9px 12px; font-size: 13px; color: var(--text);
+  background: var(--surface2); font-family: inherit;
+  transition: border-color .15s, box-shadow .15s;
+}
+.map-search-bar input:focus { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px rgba(26,86,219,.08); outline: none; }
+#map-search-results {
+  position: absolute; z-index: 9999;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-sm); box-shadow: var(--sh-md);
+  max-height: 200px; overflow-y: auto;
+  width: calc(100% - 120px);
+  display: none;
+}
+#map-search-results .res-item {
+  padding: 9px 12px; font-size: 12px; cursor: pointer;
+  border-bottom: 1px solid var(--border2); color: var(--text);
+  transition: background .1s;
+}
+#map-search-results .res-item:hover { background: var(--accent-bg); color: var(--accent); }
+#map-search-results .res-item:last-child { border-bottom: none; }
+.map-type-bar {
+  display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;
+}
+.map-type-btn {
+  padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text2);
+  cursor: pointer; transition: all .12s;
+}
+.map-type-btn:hover { color: var(--text); border-color: var(--text2); }
+.map-type-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.map-legend {
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+  padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: var(--r-sm); margin-bottom: 12px; font-size: 11px;
+}
+.map-legend-item { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text2); }
+.map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.map-area-list { max-height: 260px; overflow-y: auto; }
+.map-area-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-bottom: 1px solid var(--border2);
+  font-size: 12px; cursor: pointer; transition: background .1s;
+}
+.map-area-item:hover { background: var(--accent-bg); }
+.map-area-item:last-child { border-bottom: none; }
+.map-area-color { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+.map-area-name { flex: 1; font-weight: 600; color: var(--text); }
+.map-area-charge-badge { font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--accent-bg); color: var(--accent); border-radius: 4px; padding: 2px 8px; }
+.map-instructions {
+  background: var(--accent-bg); border: 1px solid #C7D9FB; border-radius: var(--r-sm);
+  padding: 10px 14px; font-size: 12px; color: var(--accent); margin-bottom: 12px;
+  line-height: 1.6;
+}
+.marker-popup {
+  font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6;
+}
+.marker-popup b { color: var(--accent); }
+
+/* Leaflet overrides */
+.leaflet-popup-content-wrapper { border-radius: var(--r); box-shadow: var(--sh-md); border: 1px solid var(--border); }
+.leaflet-popup-content { margin: 12px 14px; font-family: 'Inter', sans-serif; font-size: 13px; }
+.leaflet-popup-tip-container { display: none; }
 
 /* ═══════════════════════════════════════════════════
    ANIMATIONS
 ═══════════════════════════════════════════════════ */
-@keyframes fadeSlideUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+@keyframes fadeSlideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ═══════════════════════════════════════════════════
    RESPONSIVE
 ═══════════════════════════════════════════════════ */
-@media (max-width: 1100px) {
-  .stats { grid-template-columns: 1fr 1fr; }
-  .grid-3 { grid-template-columns: 1fr 1fr; }
-}
+@media (max-width: 1100px) { .stats { grid-template-columns: 1fr 1fr; } .grid-3 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 768px) {
   :root { --sidebar-w: 228px; }
   .sidebar { transform: translateX(-100%); }
@@ -591,11 +469,9 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
   .search-input { width: 100%; }
   .search-input:focus { width: 100%; }
   .ph-right { width: 100%; }
+  #delivery-map { height: 320px; }
 }
-@media (max-width: 480px) {
-  .stats { grid-template-columns: 1fr; }
-  .sc-val { font-size: 24px; }
-}
+@media (max-width: 480px) { .stats { grid-template-columns: 1fr; } .sc-val { font-size: 24px; } }
 </style>
 </head>
 <body>
@@ -607,7 +483,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       <div class="lc-icon">🍽️</div>
       <div>
         <div class="lc-title">RestaurantBot</div>
-        <div class="lc-sub">CRM Admin Panel v12</div>
+        <div class="lc-sub">CRM Admin Panel v14.1</div>
       </div>
     </div>
     <label>Username</label>
@@ -621,11 +497,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 
 <!-- ═══════════════ APP ═══════════════ -->
 <div id="app">
-
-  <!-- Mobile overlay -->
   <div class="sb-overlay" id="sb-overlay" onclick="closeSidebar()"></div>
-
-  <!-- Mobile menu toggle -->
   <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()">☰</button>
 
   <!-- SIDEBAR -->
@@ -634,7 +506,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       <div class="sb-icon">🍽️</div>
       <div>
         <div class="sb-name">RestaurantBot</div>
-        <div class="sb-ver">CRM v12.0</div>
+        <div class="sb-ver">CRM v14.1</div>
       </div>
     </div>
     <nav class="sb-nav">
@@ -696,32 +568,22 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </button>
         </div>
       </div>
-
       <div class="stats">
         <div class="sc"><div class="sc-icon">📦</div><div class="sc-label">Total Orders</div><div class="sc-val" id="d-orders">—</div><div class="sc-sub">All time loaded</div></div>
         <div class="sc"><div class="sc-icon">⏳</div><div class="sc-label">Pending</div><div class="sc-val" id="d-pending">—</div><div class="sc-sub">Awaiting action</div></div>
         <div class="sc"><div class="sc-icon">✅</div><div class="sc-label">Delivered</div><div class="sc-val" id="d-delivered">—</div><div class="sc-sub">Completed</div></div>
         <div class="sc"><div class="sc-icon">💰</div><div class="sc-label">Revenue</div><div class="sc-val" id="d-revenue">—</div><div class="sc-sub">PKR · delivered orders</div></div>
       </div>
-
       <div class="grid-2">
-        <!-- Top items -->
         <div class="card">
-          <div class="card-head">
-            <div><div class="card-title">🔥 Top Items</div><div class="card-sub">By order count</div></div>
-          </div>
+          <div class="card-head"><div><div class="card-title">🔥 Top Items</div><div class="card-sub">By order count</div></div></div>
           <div id="d-top-items"><div class="empty"><div class="empty-icon">📊</div><div class="empty-title">No data yet</div></div></div>
         </div>
-        <!-- Order status breakdown -->
         <div class="card">
-          <div class="card-head">
-            <div><div class="card-title">📊 Order Breakdown</div><div class="card-sub">By status</div></div>
-          </div>
+          <div class="card-head"><div><div class="card-title">📊 Order Breakdown</div><div class="card-sub">By status</div></div></div>
           <div id="d-breakdown"></div>
         </div>
       </div>
-
-      <!-- Recent orders table -->
       <div class="card">
         <div class="card-head">
           <div><div class="card-title">🕐 Recent Orders</div><div class="card-sub">Latest 10 orders</div></div>
@@ -787,7 +649,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       <div class="ph">
         <div class="ph-left">
           <div class="ph-title">Bot <span>Config</span></div>
-          <div class="ph-sub">Initial messages, FAQ answers &amp; discount message · Stored in bot_metadata collection</div>
+          <div class="ph-sub">Initial messages, FAQ answers &amp; discount message</div>
         </div>
         <div class="ph-right">
           <button class="btn btn-primary btn-sm" onclick="saveBotConfig()">
@@ -796,8 +658,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </button>
         </div>
       </div>
-
-      <!-- Initial Message -->
       <div class="card">
         <div class="card-head"><div class="card-title">💬 Initial Greeting Message</div></div>
         <div class="form-grid">
@@ -806,8 +666,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           <div class="fg full"><label class="fl">Deutsch</label><textarea class="fi" id="im-de" rows="2" placeholder="Willkommen!"></textarea></div>
         </div>
       </div>
-
-      <!-- Discount Message -->
       <div class="card">
         <div class="card-head"><div class="card-title">🏷️ Discount Message</div><div class="card-sub">Shown when customer asks about deals/offers</div></div>
         <div class="form-grid">
@@ -816,8 +674,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           <div class="fg full"><label class="fl">Deutsch</label><textarea class="fi" id="dm-de" rows="2" placeholder="Heutiges Angebot: 20% Rabatt!"></textarea></div>
         </div>
       </div>
-
-      <!-- FAQs -->
       <div class="card">
         <div class="card-head"><div class="card-title">❓ FAQ Answers</div><div class="card-sub">Auto-sent by bot when customers ask these questions</div></div>
         <div id="faq-editor"></div>
@@ -829,12 +685,12 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       <div class="ph">
         <div class="ph-left">
           <div class="ph-title">Delivery <span>Settings</span></div>
-          <div class="ph-sub">Delivery time &amp; charges · Stored in bot_metadata (type=config)</div>
+          <div class="ph-sub">Delivery time, charges &amp; interactive delivery zone map</div>
         </div>
         <div class="ph-right">
           <button class="btn btn-primary btn-sm" onclick="saveDeliverySettings()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-            Save Settings
+            Save All Settings
           </button>
         </div>
       </div>
@@ -858,35 +714,87 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 
       <!-- Delivery Charges -->
       <div class="card">
-        <div class="card-head"><div><div class="card-title">💸 Delivery Charges</div><div class="card-sub">GET/POST /api/delivery-charges</div></div></div>
+        <div class="card-head"><div><div class="card-title">💸 Delivery Charges</div><div class="card-sub">GET/POST /api/delivery-charges · flat_charge, free_above, per_area, free_keywords</div></div></div>
         <div class="form-grid">
           <div class="fg">
             <label class="fl">Flat Charge (PKR)</label>
             <input class="fi" id="dc-flat" type="number" min="0" placeholder="0"/>
-            <div class="fi-hint">Standard delivery fee. 0 = free delivery.</div>
+            <div class="fi-hint">Standard fee. 0 = free delivery.</div>
           </div>
           <div class="fg">
             <label class="fl">Free Delivery Above (PKR)</label>
             <input class="fi" id="dc-free-above" type="number" min="0" placeholder="0"/>
-            <div class="fi-hint">Orders above this amount get free delivery. 0 = disabled.</div>
+            <div class="fi-hint">Orders above this → free. 0 = disabled.</div>
           </div>
           <div class="fg full">
             <label class="fl">Free Delivery Keywords</label>
             <input class="fi" id="dc-free-keywords" placeholder="e.g. head office, dha, same building"/>
-            <div class="fi-hint">Comma-separated. If customer's address contains any keyword → free delivery.</div>
+            <div class="fi-hint">Comma-separated. If address contains any keyword → free delivery.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAP SECTION -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">🗺️ Delivery Zone Map</div>
+            <div class="card-sub">Search areas, pin locations and set per-area delivery charges</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-ghost btn-sm" onclick="clearMapMarkers()">Clear All</button>
+            <button class="btn btn-green btn-sm" onclick="applyMapAreasToForm()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><polyline points="20 6 9 17 4 12"/></svg>
+              Apply to Charges
+            </button>
           </div>
         </div>
 
-        <!-- Per-area charges -->
+        <div class="map-instructions">
+          📍 <strong>How to use:</strong> Search for a neighbourhood/area using the search bar, or click anywhere on the map to drop a pin. Set the delivery charge for that zone, then click <em>"Apply to Charges"</em> to sync with the delivery charges form below.
+        </div>
+
+        <!-- Map type selector -->
+        <div class="map-type-bar">
+          <span style="font-size:11px;font-weight:600;color:var(--muted);margin-right:4px">Map Style:</span>
+          <button class="map-type-btn active" onclick="switchMapTile('streets',this)">🗺️ Streets</button>
+          <button class="map-type-btn" onclick="switchMapTile('satellite',this)">🛰️ Satellite</button>
+          <button class="map-type-btn" onclick="switchMapTile('dark',this)">🌙 Dark</button>
+          <div style="margin-left:auto;font-size:11px;color:var(--muted)" id="map-click-hint">Click map to add area</div>
+        </div>
+
+        <!-- Map search -->
+        <div style="position:relative">
+          <div class="map-search-bar">
+            <input type="text" id="map-search-input" placeholder="Search area, neighbourhood or city… (e.g. Gulshan-e-Iqbal, Karachi)" oninput="debounceMapSearch(this.value)" onkeydown="if(event.key==='Enter')mapSearchGo()"/>
+            <button class="btn btn-ghost btn-sm" onclick="mapSearchGo()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+              Search
+            </button>
+          </div>
+          <div id="map-search-results"></div>
+        </div>
+
+        <!-- Map legend -->
+        <div class="map-legend" id="map-legend">
+          <div class="map-legend-item"><div class="map-legend-dot" style="background:#1A56DB"></div>Pinned area</div>
+          <div class="map-legend-item"><div class="map-legend-dot" style="background:#0D9E6A"></div>Free delivery</div>
+          <div class="map-legend-item"><div class="map-legend-dot" style="background:#E02C2C"></div>Chargeable</div>
+          <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="pin-count">0 areas pinned</span>
+        </div>
+
+        <!-- The map -->
+        <div id="delivery-map"></div>
+
+        <!-- Pinned areas list -->
         <div style="margin-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <div>
-              <div class="fl" style="font-size:11px">Per-Area Charges</div>
-              <div class="fi-hint" style="margin:0">Area-specific delivery fee overrides</div>
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="addAreaRow()">+ Add Area</button>
+            <div class="fl" style="font-size:11px">Pinned Delivery Areas</div>
+            <button class="btn btn-ghost btn-sm" onclick="addAreaManually()">+ Add Manually</button>
           </div>
-          <div id="area-rows"></div>
+          <div class="map-area-list" id="map-area-list">
+            <div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No areas pinned yet. Search or click on the map.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -917,7 +825,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <div id="sug-panel-en"><div id="sug-list-en"></div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addSugRow('en')">+ Add Suggestion</button></div>
         <div id="sug-panel-ur" style="display:none"><div id="sug-list-ur"></div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addSugRow('ur')">+ Add Suggestion</button></div>
         <div id="sug-panel-de" style="display:none"><div id="sug-list-de"></div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addSugRow('de')">+ Add Suggestion</button></div>
-        <!-- Presets -->
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border2)">
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:600">QUICK ADD PRESETS</div>
           <div id="sug-presets" style="display:flex;flex-wrap:wrap;gap:6px"></div>
@@ -975,7 +882,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <div class="mtab" id="mt-variants" onclick="switchMTab('variants')">② Sizes & Spice</div>
         <div class="mtab" id="mt-extras" onclick="switchMTab('extras')">③ Extras & Notes</div>
       </div>
-      <!-- Basic Info -->
+      <!-- Basic -->
       <div class="mtab-panel active" id="mp-basic">
         <input type="hidden" id="pm-id"/>
         <div class="form-grid">
@@ -1004,7 +911,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           <div id="desc-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
         </div>
       </div>
-      <!-- Variants & Spice -->
+      <!-- Variants -->
       <div class="mtab-panel" id="mp-variants">
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px" id="variant-hint">Add size variants with prices</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px" id="variant-chips"></div>
@@ -1013,7 +920,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <div style="margin-top:18px;margin-bottom:8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Spice Levels</div>
         <div id="spice-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
-      <!-- Extras & Notes -->
+      <!-- Extras -->
       <div class="mtab-panel" id="mp-extras">
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Optional add-ons customers can choose</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px" id="extras-chips"></div>
@@ -1049,6 +956,42 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
   </div>
 </div>
 
+<!-- ═══════════════ AREA CHARGE MODAL ═══════════════ -->
+<div class="modal-bg" id="area-modal" onclick="if(event.target===this)closeAreaModal()">
+  <div class="modal" style="width:420px">
+    <div class="modal-hd">
+      <div>
+        <div class="modal-title">📍 Set Delivery Charge</div>
+        <div class="modal-sub" id="area-modal-name">Area name</div>
+      </div>
+      <button class="modal-close" onclick="closeAreaModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg" style="margin-bottom:14px">
+        <label class="fl">Area / Neighbourhood Name</label>
+        <input class="fi" id="area-modal-area" placeholder="e.g. Gulshan-e-Iqbal, DHA Phase 6"/>
+        <div class="fi-hint">This keyword will be matched against the customer's delivery address</div>
+      </div>
+      <div class="fg" style="margin-bottom:14px">
+        <label class="fl">Delivery Charge (PKR)</label>
+        <input class="fi" id="area-modal-charge" type="number" min="0" placeholder="0 for free delivery"/>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--r-sm);font-size:12px;color:var(--muted)">
+        <span>💡</span>
+        <span>Set charge to <strong>0</strong> to mark this area as free delivery</span>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost btn-sm" onclick="closeAreaModal()">Cancel</button>
+      <button class="btn btn-danger btn-sm" id="area-modal-delete" onclick="deleteMapArea()" style="display:none">Delete</button>
+      <button class="btn btn-primary btn-sm" onclick="saveAreaModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Save Area
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast"></div>
 
@@ -1063,8 +1006,16 @@ let refreshTimer = null;
 let variantRows = [], extrasRows = [], selectedSpice = [];
 let sugData = { greeting: { en:[], ur:[], de:[] } };
 let currentSugLang = 'en';
-let areaRows = [];
 let faqData = {};
+
+// Map state
+let deliveryMap = null;
+let mapTileLayer = null;
+let mapMarkers = [];   // [{latlng, areaName, charge, marker}]
+let pendingMapClick = null;
+let currentEditAreaIdx = null;
+let mapSearchTimer = null;
+const MAP_COLORS = ['#1A56DB','#0D9E6A','#E02C2C','#6D28D9','#C47A00','#0891B2','#BE185D','#7C3AED'];
 
 // ═══════════════════════════════════════════════════
 // LOGIN
@@ -1092,16 +1043,10 @@ document.addEventListener('keydown', e => {
 });
 
 // ═══════════════════════════════════════════════════
-// SIDEBAR (MOBILE)
+// SIDEBAR
 // ═══════════════════════════════════════════════════
-function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sb-overlay').classList.toggle('open');
-}
-function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sb-overlay').classList.remove('open');
-}
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sb-overlay').classList.toggle('open'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sb-overlay').classList.remove('open'); }
 
 // ═══════════════════════════════════════════════════
 // NAVIGATION
@@ -1112,12 +1057,12 @@ function showPage(id, navEl) {
   document.getElementById('page-' + id).classList.add('active');
   if (navEl) navEl.classList.add('active');
   closeSidebar();
-  if (id === 'orders') renderOrders();
-  if (id === 'products') renderProducts();
-  if (id === 'botconfig') loadBotConfig();
-  if (id === 'delivery') loadDeliverySettings();
+  if (id === 'orders')      renderOrders();
+  if (id === 'products')    renderProducts();
+  if (id === 'botconfig')   loadBotConfig();
+  if (id === 'delivery')    { loadDeliverySettings(); setTimeout(initMap, 200); }
   if (id === 'suggestions') loadSuggestions();
-  if (id === 'analytics') loadAnalytics();
+  if (id === 'analytics')   loadAnalytics();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1130,9 +1075,7 @@ async function fetchData() {
     allProducts = d.products || [];
     const incoming = d.orders || [];
     const newPendIds = new Set();
-    if (knownIds.size > 0) {
-      incoming.forEach(o => { if (!knownIds.has(o._id) && o.status === 'Pending') newPendIds.add(o._id); });
-    }
+    if (knownIds.size > 0) incoming.forEach(o => { if (!knownIds.has(o._id) && o.status === 'Pending') newPendIds.add(o._id); });
     incoming.forEach(o => knownIds.add(o._id));
     allOrders = incoming;
     updateDashboard();
@@ -1158,9 +1101,7 @@ function timeAgo(iso) {
   return d.toLocaleDateString();
 }
 function statusPill(s) { return `<span class="pill pill-${s}">${s}</span>`; }
-function catEmoji(c) {
-  return { biryani:'🍛', burger:'🍔', pizza:'🍕', karahi:'🫕', rolls:'🌯', rice:'🍚', drinks:'🥤', dessert:'🍮' }[c] || '🍽️';
-}
+function catEmoji(c) { return { biryani:'🍛', burger:'🍔', pizza:'🍕', karahi:'🫕', rolls:'🌯', rice:'🍚', drinks:'🥤', dessert:'🍮' }[c] || '🍽️'; }
 
 // ═══════════════════════════════════════════════════
 // DASHBOARD
@@ -1170,40 +1111,31 @@ function updateDashboard() {
   const pending = orders.filter(o => o.status === 'Pending').length;
   const delivered = orders.filter(o => o.status === 'Delivered').length;
   const revenue = orders.filter(o => o.status === 'Delivered').reduce((s,o) => s + (parseFloat(o.total_price)||0), 0);
-
   document.getElementById('d-orders').textContent = orders.length;
   document.getElementById('d-pending').textContent = pending;
   document.getElementById('d-delivered').textContent = delivered;
   document.getElementById('d-revenue').textContent = revenue > 0 ? 'PKR ' + fmt(Math.round(revenue)) : '—';
-
   const pb = document.getElementById('pending-badge');
   pb.textContent = pending; pb.style.display = pending > 0 ? 'block' : 'none';
-
   // Top items
   const ic = {};
   orders.forEach(o => (o.items||[]).forEach(it => { const k = it.title||'?'; ic[k] = (ic[k]||0) + (it.quantity||1); }));
   const top = Object.entries(ic).sort((a,b) => b[1]-a[1]).slice(0,6);
-  const tiEl = document.getElementById('d-top-items');
-  tiEl.innerHTML = top.length ? top.map(([n,c]) =>
-    `<div class="an-bar"><div class="an-bar-row"><span>${esc(n)}</span><span>${c} orders</span></div>
-    <div class="an-track"><div class="an-fill" style="width:${Math.round(c/top[0][1]*100)}%;background:var(--accent)"></div></div></div>`
+  document.getElementById('d-top-items').innerHTML = top.length ? top.map(([n,c]) =>
+    `<div class="an-bar"><div class="an-bar-row"><span>${esc(n)}</span><span>${c} orders</span></div><div class="an-track"><div class="an-fill" style="width:${Math.round(c/top[0][1]*100)}%;background:var(--accent)"></div></div></div>`
   ).join('') : '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">No orders yet</div></div>';
-
   // Breakdown
   const statuses = ['Pending','Accepted','Processing','Delivered','Rejected'];
   const colors = { Pending:'var(--amber)', Accepted:'var(--accent)', Processing:'var(--purple)', Delivered:'var(--green)', Rejected:'var(--red)' };
   const total = orders.length || 1;
   document.getElementById('d-breakdown').innerHTML = statuses.map(s => {
     const cnt = orders.filter(o => o.status === s).length;
-    return `<div class="an-bar"><div class="an-bar-row"><span>${statusPill(s)}</span><span>${cnt} orders</span></div>
-    <div class="an-track"><div class="an-fill" style="width:${Math.round(cnt/total*100)}%;background:${colors[s]}"></div></div></div>`;
+    return `<div class="an-bar"><div class="an-bar-row"><span>${statusPill(s)}</span><span>${cnt} orders</span></div><div class="an-track"><div class="an-fill" style="width:${Math.round(cnt/total*100)}%;background:${colors[s]}"></div></div></div>`;
   }).join('');
-
   // Recent table
   const tbody = document.querySelector('#d-tbl tbody');
   tbody.innerHTML = orders.slice(0,10).map(o => {
-    const items = o.items || [];
-    const first = items[0];
+    const items = o.items || []; const first = items[0];
     const label = first ? esc(first.title) : esc(o.dish||'—');
     const more = items.length > 1 ? ` <span style="color:var(--muted);font-size:11px">+${items.length-1}</span>` : '';
     const dc = o.delivery_charge > 0 ? `PKR ${o.delivery_charge}` : '<span style="color:var(--green);font-size:11px">Free</span>';
@@ -1220,7 +1152,7 @@ function updateDashboard() {
 }
 
 // ═══════════════════════════════════════════════════
-// ORDER FILTER + RENDER
+// ORDERS
 // ═══════════════════════════════════════════════════
 function setOrderFilter(f, el) {
   orderFilter = f;
@@ -1247,46 +1179,22 @@ function buildOrderCard(o, isNew) {
   const visible = items.slice(0, 2);
   const hidden = items.length - 2;
   const dcLine = o.delivery_charge > 0 ? `<span style="color:var(--amber);font-size:11px;font-weight:600">🚚 PKR ${o.delivery_charge}</span>` : `<span style="color:var(--green);font-size:11px;font-weight:600">🚚 Free</span>`;
-
   const itemsHtml = items.length ? visible.map(it => {
     const meta = [];
     if (it.size)  meta.push(it.size);
     if (it.spice) meta.push('🌶️ ' + it.spice);
     if (it.extras && it.extras.length) meta.push('➕ ' + (Array.isArray(it.extras) ? it.extras.join(', ') : it.extras));
-    return `<div class="oc-item">
-      <span class="oc-qty">×${it.quantity||1}</span>
-      <div class="oc-item-info">
-        <div class="oc-item-name">${esc(it.title||'Item')}</div>
-        ${meta.length ? `<div class="oc-item-meta">${esc(meta.join(' · '))}</div>` : ''}
-      </div>
-      <span class="oc-item-price">PKR ${it.total_item_price||0}</span>
-    </div>`;
+    return `<div class="oc-item"><span class="oc-qty">×${it.quantity||1}</span><div class="oc-item-info"><div class="oc-item-name">${esc(it.title||'Item')}</div>${meta.length ? `<div class="oc-item-meta">${esc(meta.join(' · '))}</div>` : ''}</div><span class="oc-item-price">PKR ${it.total_item_price||0}</span></div>`;
   }).join('') + (hidden > 0 ? `<div class="oc-more">+${hidden} more item${hidden>1?'s':''}…</div>` : '') : '<div style="font-size:12px;color:var(--muted)">No items</div>';
-
-  const actions = buildActionBtns(id, o.status);
-
   return `<div class="order-card${isNew && o.status==='Pending' ? ' is-new' : ''}">
     <div class="oc-top">
-      <div>
-        <div class="oc-id">#${esc(id.slice(-10))}</div>
-        <div style="margin-top:5px;display:flex;align-items:center;gap:6px">
-          ${statusPill(o.status)}
-          ${isNew && o.status==='Pending' ? '<span style="font-size:10px;font-weight:700;background:var(--amber-bg);color:var(--amber);border-radius:4px;padding:1px 6px">NEW</span>' : ''}
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div class="oc-time">${timeAgo(o.timestamp)}</div>
-        <div class="oc-phone">${esc((o.user_id||'').slice(-12))}</div>
-        ${dcLine}
-      </div>
+      <div><div class="oc-id">#${esc(id.slice(-10))}</div><div style="margin-top:5px;display:flex;align-items:center;gap:6px">${statusPill(o.status)}${isNew && o.status==='Pending' ? '<span style="font-size:10px;font-weight:700;background:var(--amber-bg);color:var(--amber);border-radius:4px;padding:1px 6px">NEW</span>' : ''}</div></div>
+      <div style="text-align:right"><div class="oc-time">${timeAgo(o.timestamp)}</div><div class="oc-phone">${esc((o.user_id||'').slice(-12))}</div>${dcLine}</div>
     </div>
     <div class="oc-items">${itemsHtml}</div>
-    <div class="oc-total">
-      <span class="oc-total-label">Grand Total</span>
-      <span class="oc-total-val">PKR ${o.total_price||0}</span>
-    </div>
+    <div class="oc-total"><span class="oc-total-label">Grand Total</span><span class="oc-total-val">PKR ${o.total_price||0}</span></div>
     ${o.address ? `<div class="oc-addr">📍 <span>${esc(o.address)}</span></div>` : ''}
-    <div class="oc-actions">${actions}</div>
+    <div class="oc-actions">${buildActionBtns(id, o.status)}</div>
   </div>`;
 }
 
@@ -1304,45 +1212,27 @@ function buildActionBtns(id, status) {
 
 async function updateStatus(id, status) {
   try {
-    const r = await fetch(`/api/orders/${id}/status`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ status })
-    });
+    const r = await fetch(`/api/orders/${id}/status`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ status }) });
     const d = await r.json();
     if (d.status === 'success' || r.ok) { toast(d.message || 'Status updated'); await fetchData(); }
     else toast(d.message || 'Update failed', 'err');
   } catch { toast('Update failed', 'err'); }
 }
 
-// ═══════════════════════════════════════════════════
-// ORDER DETAIL MODAL
-// ═══════════════════════════════════════════════════
 function openOrderDetail(id) {
   const o = allOrders.find(x => x._id === id);
   if (!o) return;
   const items = o.items || [];
   document.getElementById('od-title').textContent = `Order #${id.slice(-10)}`;
   document.getElementById('od-sub').innerHTML = `${statusPill(o.status)} &nbsp;·&nbsp; ${timeAgo(o.timestamp)}`;
-
   const itemsHtml = items.length ? items.map(it => {
     const tags = [];
-    if (it.size)  tags.push(`<span style="background:var(--accent-bg);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">📏 ${esc(it.size)}</span>`);
+    if (it.size) tags.push(`<span style="background:var(--accent-bg);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">📏 ${esc(it.size)}</span>`);
     if (it.spice) tags.push(`<span style="background:var(--amber-bg);color:var(--amber);border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">🌶️ ${esc(it.spice)}</span>`);
-    if (it.extras) (Array.isArray(it.extras) ? it.extras : [it.extras]).forEach(e => {
-      tags.push(`<span style="background:var(--green-bg);color:var(--green);border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">➕ ${esc(e)}</span>`);
-    });
-    return `<div class="oc-item" style="margin-bottom:6px">
-      <span class="oc-qty" style="background:var(--accent);color:#fff">×${it.quantity||1}</span>
-      <div class="oc-item-info">
-        <div class="oc-item-name" style="font-size:13px">${esc(it.title||'Item')}</div>
-        ${tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">${tags.join('')}</div>` : ''}
-      </div>
-      <span class="oc-item-price" style="font-size:13px">PKR ${it.total_item_price||0}</span>
-    </div>`;
+    if (it.extras) (Array.isArray(it.extras) ? it.extras : [it.extras]).forEach(e => tags.push(`<span style="background:var(--green-bg);color:var(--green);border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">➕ ${esc(e)}</span>`));
+    return `<div class="oc-item" style="margin-bottom:6px"><span class="oc-qty" style="background:var(--accent);color:#fff">×${it.quantity||1}</span><div class="oc-item-info"><div class="oc-item-name" style="font-size:13px">${esc(it.title||'Item')}</div>${tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">${tags.join('')}</div>` : ''}</div><span class="oc-item-price" style="font-size:13px">PKR ${it.total_item_price||0}</span></div>`;
   }).join('') : '<div style="color:var(--muted);font-size:13px">No items</div>';
-
   const statusFlow = buildActionBtnsDetail(id, o.status);
-
   document.getElementById('od-body').innerHTML = `
     <div class="od-section">
       <div class="od-section-title">Order Info</div>
@@ -1358,16 +1248,12 @@ function openOrderDetail(id) {
     <div class="od-section">
       <div class="od-section-title">Items (${items.length})</div>
       ${itemsHtml}
-      <div class="od-total-box">
-        <span style="font-size:13px;font-weight:600;opacity:.85">Grand Total</span>
-        <span style="font-family:var(--mono);font-size:18px;font-weight:800">PKR ${o.total_price||0}</span>
-      </div>
+      <div class="od-total-box"><span style="font-size:13px;font-weight:600;opacity:.85">Grand Total</span><span style="font-family:var(--mono);font-size:18px;font-weight:800">PKR ${o.total_price||0}</span></div>
     </div>
     ${statusFlow ? `<div class="od-section"><div class="od-section-title">Update Status</div><div style="display:flex;flex-wrap:wrap;gap:7px">${statusFlow}</div></div>` : ''}
   `;
   document.getElementById('order-modal').classList.add('open');
 }
-
 function buildActionBtnsDetail(id, status) {
   const b = (label, s, cls) => `<button class="btn btn-sm ${cls}" onclick="updateStatus('${id}','${s}');closeOrderDetail()">${label}</button>`;
   let h = '';
@@ -1382,18 +1268,12 @@ function closeOrderDetail() { document.getElementById('order-modal').classList.r
 // PRODUCTS
 // ═══════════════════════════════════════════════════
 let productsCache = [];
-function filterProducts(q) {
-  const l = q.toLowerCase();
-  renderProductCards(productsCache.filter(p => (p.title||'').toLowerCase().includes(l) || (p.category||'').toLowerCase().includes(l)));
-}
+function filterProducts(q) { const l = q.toLowerCase(); renderProductCards(productsCache.filter(p => (p.title||'').toLowerCase().includes(l) || (p.category||'').toLowerCase().includes(l))); }
 function renderProducts() { productsCache = [...allProducts]; renderProductCards(productsCache); }
 function renderProductCards(products) {
   const grid = document.getElementById('products-grid');
   if (!grid) return;
-  if (!products.length) {
-    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">🍽️</div><div class="empty-title">No products</div></div>`;
-    return;
-  }
+  if (!products.length) { grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">🍽️</div><div class="empty-title">No products</div></div>`; return; }
   grid.innerHTML = products.map(p => {
     const variants = p.variants || [];
     const minP = variants.length ? Math.min(...variants.map(v => v.price||0)) : (p.price||0);
@@ -1409,10 +1289,7 @@ function renderProductCards(products) {
         <div class="pc-desc">${esc((p.description||'').slice(0,70))}${(p.description||'').length>70?'…':''}</div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px">
           <span style="font-size:11px;color:var(--muted);font-weight:500">Available</span>
-          <label class="avail-toggle">
-            <input type="checkbox" ${avail?'checked':''} onchange="toggleAvail('${p._id}',this.checked)"/>
-            <span class="avail-slider"></span>
-          </label>
+          <label class="avail-toggle"><input type="checkbox" ${avail?'checked':''} onchange="toggleAvail('${p._id}',this.checked)"/><span class="avail-slider"></span></label>
         </div>
         <div class="pc-actions">
           <button class="btn btn-ghost btn-sm" style="flex:1" onclick="openProductModal('${p._id}')">Edit</button>
@@ -1426,8 +1303,7 @@ function renderProductCards(products) {
 async function toggleAvail(id, checked) {
   try {
     const r = await fetch('/update_product', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, availability: checked ? 'available' : 'unavailable' }) });
-    const d = await r.json();
-    toast(d.message || 'Updated');
+    const d = await r.json(); toast(d.message || 'Updated');
     const p = allProducts.find(x => x._id === id);
     if (p) p.availability = checked ? 'available' : 'unavailable';
   } catch { toast('Failed','err'); }
@@ -1437,100 +1313,32 @@ async function delProduct(id) {
   if (!confirm('Delete this dish?')) return;
   const fd = new FormData(); fd.append('id', id);
   const r = await fetch('/delete_product', { method:'POST', body:fd });
-  const d = await r.json();
-  toast(d.message || 'Deleted');
-  await fetchData();
+  const d = await r.json(); toast(d.message || 'Deleted'); await fetchData();
 }
 
 // ═══════════════════════════════════════════════════
-// PRODUCT MODAL — CATEGORY CONFIG
+// PRODUCT MODAL
 // ═══════════════════════════════════════════════════
 const CAT_CFG = {
-  biryani: {
-    hint: 'Add plate sizes and spice levels for biryani',
-    descTpl: ['Aromatic basmati rice slow-cooked with tender meat and whole spices.','Rich and fragrant dum biryani with saffron and kewra water.'],
-    variants: [{ n:'Half Plate', p:180 },{ n:'Full Plate', p:320 },{ n:'Family Pack', p:950 }],
-    spice: ['Normal','Spicy','Less Spicy','Extra Spicy'],
-    extras: [{ n:'Extra Raita', p:50 },{ n:'Salad', p:40 },{ n:'Cold Drink', p:120 },{ n:'Extra Meat', p:150 }],
-  },
-  burger: {
-    hint: 'Add size variants and customize extras',
-    descTpl: ['Crispy chicken fillet with fresh lettuce, tomato and mayo.','Juicy beef patty with cheese, pickles and special sauce.'],
-    variants: [{ n:'Regular', p:350 },{ n:'Large', p:450 },{ n:'Double', p:600 }],
-    spice: ['Mild','Medium','Spicy','Extra Hot'],
-    extras: [{ n:'Extra Cheese', p:60 },{ n:'Double Patty', p:150 },{ n:'Jalapeños', p:40 },{ n:'Coleslaw', p:50 }],
-  },
-  pizza: {
-    hint: 'Add inch sizes — customers pick size first',
-    descTpl: ['Hand-tossed pizza with mozzarella and fresh toppings.','Stone-baked pizza with rich tomato base.'],
-    variants: [{ n:'Small (6")', p:799 },{ n:'Medium (9")', p:1199 },{ n:'Large (12")', p:1599 },{ n:'XL (14")', p:1999 }],
-    spice: ['Mild','Medium','Spicy'],
-    extras: [{ n:'Extra Cheese', p:100 },{ n:'Garlic Bread', p:120 },{ n:'Dip Sauce', p:50 }],
-  },
-  karahi: {
-    hint: 'Add weight-based variants for karahi',
-    descTpl: ['Slow-cooked in wok with tomatoes, ginger, chilies and spices.','Rich aromatic karahi prepared fresh to order.'],
-    variants: [{ n:'Half Kg', p:450 },{ n:'1 Kg', p:900 },{ n:'1.5 Kg', p:1350 }],
-    spice: ['Mild','Medium','Spicy','Less Oil'],
-    extras: [{ n:'Naan x2', p:60 },{ n:'Raita', p:50 },{ n:'Salad', p:40 }],
-  },
-  rolls: {
-    hint: 'Add roll count variants',
-    descTpl: ['Crispy paratha roll with spiced chicken tikka and chutney.'],
-    variants: [{ n:'Single Roll', p:150 },{ n:'Double Roll', p:280 },{ n:'Family (6)', p:750 }],
-    spice: ['Mild','Medium','Spicy'],
-    extras: [{ n:'Extra Chutney', p:20 },{ n:'Fries', p:120 }],
-  },
-  rice: {
-    hint: 'Add portion sizes',
-    descTpl: ['Steamed basmati rice served with curry.'],
-    variants: [{ n:'Half Plate', p:120 },{ n:'Full Plate', p:220 }],
-    spice: ['Normal','Less Spicy'],
-    extras: [{ n:'Dal', p:80 },{ n:'Raita', p:50 }],
-  },
-  drinks: {
-    hint: 'Add ml/L size variants',
-    descTpl: ['Chilled refreshing drink served ice cold.'],
-    variants: [{ n:'Small (250ml)', p:80 },{ n:'Regular (500ml)', p:120 },{ n:'Large (1L)', p:200 }],
-    spice: [],
-    extras: [],
-  },
-  dessert: {
-    hint: 'Add portion sizes and toppings',
-    descTpl: ['Rich creamy dessert made with traditional recipe.'],
-    variants: [{ n:'Regular', p:180 },{ n:'Large', p:280 },{ n:'Party Size', p:600 }],
-    spice: [],
-    extras: [{ n:'Extra Cream', p:50 },{ n:'Ice Cream Scoop', p:80 }],
-  },
-  other: {
-    hint: 'Add variants and extras as needed',
-    descTpl: ['Fresh and delicious dish prepared to order.'],
-    variants: [{ n:'Small', p:0 },{ n:'Medium', p:0 },{ n:'Large', p:0 }],
-    spice: ['Mild','Medium','Spicy'],
-    extras: [],
-  },
+  biryani: { hint:'Add plate sizes and spice levels for biryani', descTpl:['Aromatic basmati rice slow-cooked with tender meat and whole spices.','Rich and fragrant dum biryani with saffron and kewra water.'], variants:[{n:'Half Plate',p:180},{n:'Full Plate',p:320},{n:'Family Pack',p:950}], spice:['Normal','Spicy','Less Spicy','Extra Spicy'], extras:[{n:'Extra Raita',p:50},{n:'Salad',p:40},{n:'Cold Drink',p:120},{n:'Extra Meat',p:150}] },
+  burger: { hint:'Add size variants and customize extras', descTpl:['Crispy chicken fillet with fresh lettuce, tomato and mayo.','Juicy beef patty with cheese, pickles and special sauce.'], variants:[{n:'Regular',p:350},{n:'Large',p:450},{n:'Double',p:600}], spice:['Mild','Medium','Spicy','Extra Hot'], extras:[{n:'Extra Cheese',p:60},{n:'Double Patty',p:150},{n:'Jalapeños',p:40},{n:'Coleslaw',p:50}] },
+  pizza: { hint:'Add inch sizes — customers pick size first', descTpl:['Hand-tossed pizza with mozzarella and fresh toppings.','Stone-baked pizza with rich tomato base.'], variants:[{n:'Small (6")',p:799},{n:'Medium (9")',p:1199},{n:'Large (12")',p:1599},{n:'XL (14")',p:1999}], spice:['Mild','Medium','Spicy'], extras:[{n:'Extra Cheese',p:100},{n:'Garlic Bread',p:120},{n:'Dip Sauce',p:50}] },
+  karahi: { hint:'Add weight-based variants for karahi', descTpl:['Slow-cooked in wok with tomatoes, ginger, chilies and spices.','Rich aromatic karahi prepared fresh to order.'], variants:[{n:'Half Kg',p:450},{n:'1 Kg',p:900},{n:'1.5 Kg',p:1350}], spice:['Mild','Medium','Spicy','Less Oil'], extras:[{n:'Naan x2',p:60},{n:'Raita',p:50},{n:'Salad',p:40}] },
+  rolls: { hint:'Add roll count variants', descTpl:['Crispy paratha roll with spiced chicken tikka and chutney.'], variants:[{n:'Single Roll',p:150},{n:'Double Roll',p:280},{n:'Family (6)',p:750}], spice:['Mild','Medium','Spicy'], extras:[{n:'Extra Chutney',p:20},{n:'Fries',p:120}] },
+  rice: { hint:'Add portion sizes', descTpl:['Steamed basmati rice served with curry.'], variants:[{n:'Half Plate',p:120},{n:'Full Plate',p:220}], spice:['Normal','Less Spicy'], extras:[{n:'Dal',p:80},{n:'Raita',p:50}] },
+  drinks: { hint:'Add ml/L size variants', descTpl:['Chilled refreshing drink served ice cold.'], variants:[{n:'Small (250ml)',p:80},{n:'Regular (500ml)',p:120},{n:'Large (1L)',p:200}], spice:[], extras:[] },
+  dessert: { hint:'Add portion sizes and toppings', descTpl:['Rich creamy dessert made with traditional recipe.'], variants:[{n:'Regular',p:180},{n:'Large',p:280},{n:'Party Size',p:600}], spice:[], extras:[{n:'Extra Cream',p:50},{n:'Ice Cream Scoop',p:80}] },
+  other: { hint:'Add variants and extras as needed', descTpl:['Fresh and delicious dish prepared to order.'], variants:[{n:'Small',p:0},{n:'Medium',p:0},{n:'Large',p:0}], spice:['Mild','Medium','Spicy'], extras:[] },
 };
 
-// ═══════════════════════════════════════════════════
-// MODAL TAB SWITCH
-// ═══════════════════════════════════════════════════
 function switchMTab(tab) {
-  ['basic','variants','extras'].forEach(t => {
-    document.getElementById('mt-'+t).classList.toggle('active', t===tab);
-    document.getElementById('mp-'+t).classList.toggle('active', t===tab);
-  });
+  ['basic','variants','extras'].forEach(t => { document.getElementById('mt-'+t).classList.toggle('active', t===tab); document.getElementById('mp-'+t).classList.toggle('active', t===tab); });
   if (tab === 'variants') renderVariantPanel();
   if (tab === 'extras')   renderExtrasPanel();
 }
-
-function onCatChange(cat) {
-  const cfg = CAT_CFG[cat] || CAT_CFG.other;
-  document.getElementById('variant-hint').textContent = cfg.hint;
-  buildDescChips(cat);
-}
+function onCatChange(cat) { const cfg = CAT_CFG[cat] || CAT_CFG.other; document.getElementById('variant-hint').textContent = cfg.hint; buildDescChips(cat); }
 function onTitleInput(val) {
-  const v = val.toLowerCase();
-  const sel = document.getElementById('pm-category');
+  const v = val.toLowerCase(); const sel = document.getElementById('pm-category');
   if (/biryani/.test(v)) sel.value='biryani';
   else if (/burger|zinger|broast/.test(v)) sel.value='burger';
   else if (/pizza/.test(v)) sel.value='pizza';
@@ -1543,18 +1351,13 @@ function onTitleInput(val) {
 }
 function buildDescChips(cat) {
   const cfg = CAT_CFG[cat] || CAT_CFG.other;
-  document.getElementById('desc-chips').innerHTML = cfg.descTpl.map(t =>
-    `<span class="chip" onclick="document.getElementById('pm-desc').value='${t.replace(/'/g,"\\'")}'">💡 ${esc(t.slice(0,40))}…</span>`
-  ).join('');
+  document.getElementById('desc-chips').innerHTML = cfg.descTpl.map(t => `<span class="chip" onclick="document.getElementById('pm-desc').value='${t.replace(/'/g,"\\'")}'">💡 ${esc(t.slice(0,40))}…</span>`).join('');
 }
 function renderVariantPanel() {
   const cat = document.getElementById('pm-category').value;
   const cfg = CAT_CFG[cat] || CAT_CFG.other;
-  document.getElementById('variant-chips').innerHTML = cfg.variants.map(v =>
-    `<span class="chip" onclick="addVariantRow('${esc(v.n)}',${v.p})">+ ${esc(v.n)}${v.p ? ' · PKR '+v.p : ''}</span>`
-  ).join('');
+  document.getElementById('variant-chips').innerHTML = cfg.variants.map(v => `<span class="chip" onclick="addVariantRow('${esc(v.n)}',${v.p})">+ ${esc(v.n)}${v.p ? ' · PKR '+v.p : ''}</span>`).join('');
   renderVariantRows();
-  // Spice chips
   document.getElementById('spice-chips').innerHTML = cfg.spice.length
     ? cfg.spice.map(s => `<span class="chip ${selectedSpice.includes(s)?'sel':''}" onclick="toggleSpiceChip('${esc(s)}',this)">${esc(s)}</span>`).join('')
     : '<span style="font-size:12px;color:var(--muted)">No spice options for this category</span>';
@@ -1562,41 +1365,25 @@ function renderVariantPanel() {
 function renderExtrasPanel() {
   const cat = document.getElementById('pm-category').value;
   const cfg = CAT_CFG[cat] || CAT_CFG.other;
-  document.getElementById('extras-chips').innerHTML = cfg.extras.map(ex =>
-    `<span class="chip" onclick="addExtrasRow('${esc(ex.n)}',${ex.p})">+ ${esc(ex.n)}${ex.p ? ' · PKR '+ex.p : ''}</span>`
-  ).join('');
+  document.getElementById('extras-chips').innerHTML = cfg.extras.map(ex => `<span class="chip" onclick="addExtrasRow('${esc(ex.n)}',${ex.p})">+ ${esc(ex.n)}${ex.p ? ' · PKR '+ex.p : ''}</span>`).join('');
   renderExtrasRows();
 }
 function toggleSpiceChip(s, el) {
   if (selectedSpice.includes(s)) { selectedSpice = selectedSpice.filter(x => x!==s); el.classList.remove('sel'); }
   else { selectedSpice.push(s); el.classList.add('sel'); }
 }
-function addVariantRow(n='', p='') {
-  if (n && variantRows.find(v => v.n===n)) return;
-  variantRows.push({ n, p }); renderVariantRows();
-}
+function addVariantRow(n='', p='') { if (n && variantRows.find(v => v.n===n)) return; variantRows.push({ n, p }); renderVariantRows(); }
 function removeVariantRow(i) { variantRows.splice(i,1); renderVariantRows(); }
 function renderVariantRows() {
   document.getElementById('variants-list').innerHTML = variantRows.map((v,i) =>
-    `<div class="vrow">
-      <input class="fi" placeholder="Size name (e.g. Full Plate)" value="${esc(v.n)}" oninput="variantRows[${i}].n=this.value" style="flex:2"/>
-      <input class="fi" placeholder="Price (PKR)" type="number" value="${v.p}" oninput="variantRows[${i}].p=parseFloat(this.value)||0" style="flex:1"/>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="removeVariantRow(${i})">×</button>
-    </div>`
+    `<div class="vrow"><input class="fi" placeholder="Size name" value="${esc(v.n)}" oninput="variantRows[${i}].n=this.value" style="flex:2"/><input class="fi" placeholder="Price (PKR)" type="number" value="${v.p}" oninput="variantRows[${i}].p=parseFloat(this.value)||0" style="flex:1"/><button class="btn btn-danger btn-sm btn-icon" onclick="removeVariantRow(${i})">×</button></div>`
   ).join('');
 }
-function addExtrasRow(n='', p=0) {
-  if (n && extrasRows.find(e => e.n===n)) return;
-  extrasRows.push({ n, p }); renderExtrasRows();
-}
+function addExtrasRow(n='', p=0) { if (n && extrasRows.find(e => e.n===n)) return; extrasRows.push({ n, p }); renderExtrasRows(); }
 function removeExtrasRow(i) { extrasRows.splice(i,1); renderExtrasRows(); }
 function renderExtrasRows() {
   document.getElementById('extras-list').innerHTML = extrasRows.map((ex,i) =>
-    `<div class="vrow">
-      <input class="fi" placeholder="Extra name (e.g. Extra Cheese)" value="${esc(ex.n)}" oninput="extrasRows[${i}].n=this.value" style="flex:2"/>
-      <input class="fi" placeholder="Price (0=free)" type="number" value="${ex.p}" oninput="extrasRows[${i}].p=parseFloat(this.value)||0" style="flex:1"/>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="removeExtrasRow(${i})">×</button>
-    </div>`
+    `<div class="vrow"><input class="fi" placeholder="Extra name" value="${esc(ex.n)}" oninput="extrasRows[${i}].n=this.value" style="flex:2"/><input class="fi" placeholder="Price (0=free)" type="number" value="${ex.p}" oninput="extrasRows[${i}].p=parseFloat(this.value)||0" style="flex:1"/><button class="btn btn-danger btn-sm btn-icon" onclick="removeExtrasRow(${i})">×</button></div>`
   ).join('');
 }
 
@@ -1605,8 +1392,7 @@ function openProductModal(pid) {
   switchMTab('basic');
   document.getElementById('product-modal').classList.add('open');
   if (pid) {
-    const p = allProducts.find(x => x._id === pid);
-    if (!p) return;
+    const p = allProducts.find(x => x._id === pid); if (!p) return;
     document.getElementById('pm-modal-title').textContent = 'Edit Dish';
     document.getElementById('pm-modal-sub').textContent = p.title || '';
     document.getElementById('pm-id').value = p._id;
@@ -1619,7 +1405,7 @@ function openProductModal(pid) {
     document.getElementById('pm-notes').value = p.notes||'';
     variantRows = (p.variants||[]).map(v => ({ n: v.size||v.name||'', p: v.price||0 }));
     selectedSpice = [...(p.spice_levels||[])];
-    extrasRows = (p.extras||[]).map(ex => typeof ex==='string' ? { n:ex, p:0 } : { n:ex.name||'', p:ex.price||0 });
+    extrasRows = (p.extras||[]).map(ex => typeof ex==='string' ? {n:ex,p:0} : {n:ex.name||'',p:ex.price||0});
     onCatChange(p.category||'other');
   } else {
     document.getElementById('pm-modal-title').textContent = 'Add New Dish';
@@ -1633,27 +1419,16 @@ function openProductModal(pid) {
 function closeProductModal() { document.getElementById('product-modal').classList.remove('open'); }
 
 async function saveDish() {
-  const id    = document.getElementById('pm-id').value;
+  const id = document.getElementById('pm-id').value;
   const title = document.getElementById('pm-title').value.trim();
   if (!title) { toast('Dish name is required', 'err'); return; }
   const variants = variantRows.filter(v => v.n).map(v => ({ size:v.n, price:parseFloat(v.p)||0 }));
   const extras   = extrasRows.filter(e => e.n).map(e => ({ name:e.n, price:parseFloat(e.p)||0 }));
-  const payload = {
-    title, category: document.getElementById('pm-category').value,
-    description: document.getElementById('pm-desc').value,
-    availability: document.getElementById('pm-avail').value,
-    rating: parseFloat(document.getElementById('pm-rating').value)||0,
-    image: document.getElementById('pm-image').value,
-    notes: document.getElementById('pm-notes').value,
-    variants, extras, spice_levels: selectedSpice,
-  };
+  const payload = { title, category: document.getElementById('pm-category').value, description: document.getElementById('pm-desc').value, availability: document.getElementById('pm-avail').value, rating: parseFloat(document.getElementById('pm-rating').value)||0, image: document.getElementById('pm-image').value, notes: document.getElementById('pm-notes').value, variants, extras, spice_levels: selectedSpice };
   if (id) payload.id = id;
   try {
-    const r = await fetch(id ? '/update_product' : '/add_product', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-    });
-    const d = await r.json();
-    toast(d.message || (id ? 'Dish updated!' : 'Dish added!'));
+    const r = await fetch(id ? '/update_product' : '/add_product', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const d = await r.json(); toast(d.message || (id ? 'Dish updated!' : 'Dish added!'));
     closeProductModal(); await fetchData();
   } catch { toast('Save failed', 'err'); }
 }
@@ -1682,32 +1457,17 @@ async function loadBotConfig() {
 function renderFaqEditor() {
   document.getElementById('faq-editor').innerHTML = FAQ_KEYS.map(key => {
     const entry = faqData[key] || {};
-    return `<div class="faq-item">
-      <div class="faq-key">${key.toUpperCase()}</div>
-      <div class="form-grid">
-        <div class="fg"><label class="fl">English</label><textarea class="fi" id="faq-${key}-en" rows="3">${esc(entry.en||'')}</textarea></div>
-        <div class="fg"><label class="fl">اردو</label><textarea class="fi" id="faq-${key}-ur" rows="3" style="direction:rtl">${esc(entry.ur||'')}</textarea></div>
-        <div class="fg full"><label class="fl">Deutsch</label><textarea class="fi" id="faq-${key}-de" rows="2">${esc(entry.de||'')}</textarea></div>
-      </div>
-    </div>`;
+    return `<div class="faq-item"><div class="faq-key">${key.toUpperCase()}</div><div class="form-grid"><div class="fg"><label class="fl">English</label><textarea class="fi" id="faq-${key}-en" rows="3">${esc(entry.en||'')}</textarea></div><div class="fg"><label class="fl">اردو</label><textarea class="fi" id="faq-${key}-ur" rows="3" style="direction:rtl">${esc(entry.ur||'')}</textarea></div><div class="fg full"><label class="fl">Deutsch</label><textarea class="fi" id="faq-${key}-de" rows="2">${esc(entry.de||'')}</textarea></div></div></div>`;
   }).join('');
 }
 async function saveBotConfig() {
-  // FAQs
   const faqP = {};
   FAQ_KEYS.forEach(k => { faqP[k] = { en: document.getElementById(`faq-${k}-en`)?.value||'', ur: document.getElementById(`faq-${k}-ur`)?.value||'', de: document.getElementById(`faq-${k}-de`)?.value||'' }; });
-  // Initial + discount messages → save via meta_col through faqs endpoint (best effort via both)
   try {
     await fetch('/api/faqs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(faqP) });
-    // Also save initial_message and discount_message via delivery-time endpoint (reuse config update pattern)
     const initMsg = { en: document.getElementById('im-en').value, ur: document.getElementById('im-ur').value, de: document.getElementById('im-de').value };
     const discMsg = { en: document.getElementById('dm-en').value, ur: document.getElementById('dm-ur').value, de: document.getElementById('dm-de').value };
-    // These go to /api/faqs as well via a combined payload update — use the endpoint the server exposes
-    // The server /api/faqs POST updates meta_col type=config faq key. For initial_message we POST to delivery-time with extra fields.
-    await fetch('/api/delivery-time', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ initial_message: initMsg, discount_message: discMsg })
-    }).catch(() => {}); // endpoint may or may not handle these fields gracefully
+    await fetch('/api/delivery-time', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ initial_message: initMsg, discount_message: discMsg }) }).catch(() => {});
     toast('Bot config saved!');
   } catch { toast('Save failed','err'); }
 }
@@ -1720,48 +1480,37 @@ async function loadDeliverySettings() {
     const [r1, r2] = await Promise.all([fetch('/api/delivery-time'), fetch('/api/delivery-charges')]);
     const dt = await r1.json();
     const dc = await r2.json();
-
-    // Delivery time
     const dtVal = dt.delivery_time;
     document.getElementById('dt-default').value = typeof dtVal === 'string' ? dtVal : (typeof dtVal === 'object' ? (dtVal.default||'35-45 mins') : '35-45 mins');
     const exceptions = dt.delivery_time_exceptions || {};
     document.getElementById('dt-exceptions').value = Object.keys(exceptions).length ? JSON.stringify(exceptions, null, 2) : '';
-
-    // Delivery charges
     const dch = dc.delivery_charges || {};
     document.getElementById('dc-flat').value = dch.flat_charge || 0;
     document.getElementById('dc-free-above').value = dch.free_above || 0;
     document.getElementById('dc-free-keywords').value = (dch.free_keywords||[]).join(', ');
-    // Area rows
-    areaRows = Object.entries(dch.per_area || {}).map(([area, charge]) => ({ area, charge }));
-    renderAreaRows();
+    // Load per_area into map markers
+    const perArea = dch.per_area || {};
+    if (Object.keys(perArea).length > 0 && mapMarkers.length === 0) {
+      // Geocode and add existing areas to map
+      for (const [areaName, charge] of Object.entries(perArea)) {
+        await geocodeAndAddArea(areaName, parseFloat(charge)||0, false);
+      }
+      renderMapAreaList();
+    }
   } catch { toast('Failed to load delivery settings','err'); }
 }
 
-function addAreaRow(area='', charge=0) { areaRows.push({ area, charge }); renderAreaRows(); }
-function removeAreaRow(i) { areaRows.splice(i,1); renderAreaRows(); }
-function renderAreaRows() {
-  document.getElementById('area-rows').innerHTML = areaRows.length
-    ? areaRows.map((r,i) => `<div class="area-row">
-        <input class="fi" placeholder="Area name (e.g. DHA, Gulshan)" value="${esc(r.area)}" oninput="areaRows[${i}].area=this.value" style="flex:2"/>
-        <input class="fi" placeholder="Charge (PKR)" type="number" value="${r.charge}" oninput="areaRows[${i}].charge=parseFloat(this.value)||0" style="flex:1"/>
-        <button class="btn btn-danger btn-sm btn-icon" onclick="removeAreaRow(${i})">×</button>
-      </div>`).join('')
-    : '<div style="font-size:12px;color:var(--muted);padding:8px 0">No area-specific charges. Click "+ Add Area" to add.</div>';
-}
-
 async function saveDeliverySettings() {
-  // Delivery time
   const dtDefault = document.getElementById('dt-default').value.trim() || '35-45 mins';
   let dtExceptions = {};
   try { const raw = document.getElementById('dt-exceptions').value.trim(); if (raw) dtExceptions = JSON.parse(raw); } catch { toast('Invalid JSON in delivery time exceptions','err'); return; }
-
-  // Delivery charges
   const flat = parseFloat(document.getElementById('dc-flat').value) || 0;
   const freeAbove = parseFloat(document.getElementById('dc-free-above').value) || 0;
   const freeKw = document.getElementById('dc-free-keywords').value.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+
+  // Build per_area from map markers
   const perArea = {};
-  areaRows.filter(r => r.area).forEach(r => { perArea[r.area.toLowerCase().trim()] = r.charge; });
+  mapMarkers.forEach(m => { if (m.areaName) perArea[m.areaName.toLowerCase().trim()] = m.charge; });
 
   try {
     const [r1, r2] = await Promise.all([
@@ -1769,9 +1518,278 @@ async function saveDeliverySettings() {
       fetch('/api/delivery-charges', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ flat_charge:flat, free_above:freeAbove, per_area:perArea, free_keywords:freeKw }) }),
     ]);
     const d1 = await r1.json(), d2 = await r2.json();
-    toast((d1.message || '') + ' ' + (d2.message || 'Delivery settings saved!'));
+    toast('Delivery settings saved! ✅');
   } catch { toast('Save failed','err'); }
 }
+
+// ═══════════════════════════════════════════════════
+// MAP FUNCTIONS
+// ═══════════════════════════════════════════════════
+const TILE_LAYERS = {
+  streets: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+};
+const TILE_ATTRS = {
+  streets: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  satellite: '© Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+  dark: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+};
+
+function initMap() {
+  if (deliveryMap) { deliveryMap.invalidateSize(); return; }
+
+  // Default to Karachi
+  deliveryMap = L.map('delivery-map', { zoomControl: true, scrollWheelZoom: true }).setView([24.8607, 67.0011], 12);
+
+  mapTileLayer = L.tileLayer(TILE_LAYERS.streets, { attribution: TILE_ATTRS.streets, maxZoom: 19 }).addTo(deliveryMap);
+
+  deliveryMap.on('click', function(e) {
+    openAreaModalForPin(e.latlng, null);
+  });
+
+  deliveryMap.invalidateSize();
+}
+
+function switchMapTile(type, el) {
+  document.querySelectorAll('.map-type-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  if (deliveryMap && mapTileLayer) {
+    deliveryMap.removeLayer(mapTileLayer);
+    mapTileLayer = L.tileLayer(TILE_LAYERS[type] || TILE_LAYERS.streets, { attribution: TILE_ATTRS[type] || TILE_ATTRS.streets, maxZoom: 19 }).addTo(deliveryMap);
+  }
+}
+
+function getMarkerColor(charge) {
+  if (charge === 0) return '#0D9E6A';
+  if (charge > 0)   return '#E02C2C';
+  return '#1A56DB';
+}
+
+function createMarkerIcon(charge, idx) {
+  const color = getMarkerColor(charge);
+  const label = charge === 0 ? 'FREE' : `PKR ${charge}`;
+  return L.divIcon({
+    className: '',
+    html: `<div style="background:${color};color:#fff;border-radius:8px 8px 8px 2px;padding:4px 8px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:Inter,sans-serif;border:2px solid #fff;transform:translateY(-100%)">${label}</div>`,
+    iconAnchor: [0, 0],
+  });
+}
+
+function addMapMarker(latlng, areaName, charge, zoomTo=false) {
+  const icon = createMarkerIcon(charge);
+  const marker = L.marker(latlng, { icon, draggable: true }).addTo(deliveryMap);
+  const idx = mapMarkers.length;
+
+  const chargeLabel = charge === 0 ? '<span style="color:#0D9E6A;font-weight:700">Free Delivery</span>' : `<span style="color:#E02C2C;font-weight:700">PKR ${charge}</span>`;
+  marker.bindPopup(`
+    <div class="marker-popup">
+      <b>📍 ${areaName || 'Unnamed Area'}</b><br/>
+      Delivery: ${chargeLabel}<br/>
+      <br/>
+      <button onclick="editMapAreaByIdx(${idx})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button>
+      <button onclick="removeMapMarkerByIdx(${idx})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button>
+    </div>
+  `);
+
+  marker.on('dragend', function(e) {
+    const m = mapMarkers[idx];
+    if (m) { m.latlng = e.target.getLatLng(); reverseGeocode(e.target.getLatLng(), idx); }
+  });
+
+  const markerData = { latlng, areaName, charge, marker };
+  mapMarkers.push(markerData);
+
+  if (zoomTo) deliveryMap.setView(latlng, 14);
+  renderMapAreaList();
+  updatePinCount();
+  return markerData;
+}
+
+function removeMapMarkerByIdx(idx) {
+  if (mapMarkers[idx]) { deliveryMap.removeLayer(mapMarkers[idx].marker); mapMarkers.splice(idx, 1); }
+  renderMapAreaList();
+  updatePinCount();
+  // Rebuild popup button indices
+  mapMarkers.forEach((m, i) => {
+    m.marker.setPopupContent(`<div class="marker-popup"><b>📍 ${m.areaName || 'Area'}</b><br/>Delivery: ${m.charge === 0 ? '<span style="color:#0D9E6A;font-weight:700">Free</span>' : `<span style="color:#E02C2C;font-weight:700">PKR ${m.charge}</span>`}<br/><br/><button onclick="editMapAreaByIdx(${i})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button><button onclick="removeMapMarkerByIdx(${i})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button></div>`);
+  });
+}
+
+function editMapAreaByIdx(idx) {
+  deliveryMap.closePopup();
+  const m = mapMarkers[idx];
+  if (!m) return;
+  currentEditAreaIdx = idx;
+  document.getElementById('area-modal-name').textContent = `Editing: ${m.areaName || 'Area'}`;
+  document.getElementById('area-modal-area').value = m.areaName || '';
+  document.getElementById('area-modal-charge').value = m.charge;
+  document.getElementById('area-modal-delete').style.display = 'inline-flex';
+  document.getElementById('area-modal').classList.add('open');
+}
+
+function openAreaModalForPin(latlng, existingName) {
+  pendingMapClick = latlng;
+  currentEditAreaIdx = null;
+  document.getElementById('area-modal-name').textContent = latlng ? `📍 ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}` : 'New Area';
+  document.getElementById('area-modal-area').value = existingName || '';
+  document.getElementById('area-modal-charge').value = '';
+  document.getElementById('area-modal-delete').style.display = 'none';
+  // Reverse geocode for name suggestion
+  if (latlng) reverseGeocodeForModal(latlng);
+  document.getElementById('area-modal').classList.add('open');
+}
+
+async function reverseGeocodeForModal(latlng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}&zoom=14&accept-language=en`, { headers:{'Accept-Language':'en'} });
+    const d = await r.json();
+    const parts = [];
+    const addr = d.address || {};
+    if (addr.suburb)       parts.push(addr.suburb);
+    else if (addr.quarter) parts.push(addr.quarter);
+    else if (addr.neighbourhood) parts.push(addr.neighbourhood);
+    if (addr.city || addr.town) parts.push(addr.city || addr.town);
+    const suggestion = parts.join(', ');
+    const input = document.getElementById('area-modal-area');
+    if (!input.value && suggestion) input.value = suggestion;
+  } catch {}
+}
+
+async function reverseGeocode(latlng, idx) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}&zoom=14`, { headers:{'Accept-Language':'en'} });
+    const d = await r.json();
+    const addr = d.address || {};
+    const name = addr.suburb || addr.quarter || addr.neighbourhood || addr.city_district || d.display_name?.split(',')[0] || 'Area';
+    if (mapMarkers[idx]) { mapMarkers[idx].areaName = name; renderMapAreaList(); }
+  } catch {}
+}
+
+function saveAreaModal() {
+  const areaName = document.getElementById('area-modal-area').value.trim();
+  const charge   = parseFloat(document.getElementById('area-modal-charge').value) || 0;
+  if (!areaName) { toast('Please enter an area name', 'err'); return; }
+  if (currentEditAreaIdx !== null && mapMarkers[currentEditAreaIdx]) {
+    // Editing existing
+    const m = mapMarkers[currentEditAreaIdx];
+    m.areaName = areaName;
+    m.charge   = charge;
+    m.marker.setIcon(createMarkerIcon(charge));
+    m.marker.setPopupContent(`<div class="marker-popup"><b>📍 ${areaName}</b><br/>Delivery: ${charge === 0 ? '<span style="color:#0D9E6A;font-weight:700">Free</span>' : `<span style="color:#E02C2C;font-weight:700">PKR ${charge}</span>`}<br/><br/><button onclick="editMapAreaByIdx(${currentEditAreaIdx})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button><button onclick="removeMapMarkerByIdx(${currentEditAreaIdx})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button></div>`);
+  } else if (pendingMapClick) {
+    // New marker from map click
+    addMapMarker(pendingMapClick, areaName, charge, false);
+  }
+  pendingMapClick = null;
+  currentEditAreaIdx = null;
+  closeAreaModal();
+  renderMapAreaList();
+  updatePinCount();
+  toast(`Area "${areaName}" saved`);
+}
+
+function deleteMapArea() {
+  if (currentEditAreaIdx !== null) removeMapMarkerByIdx(currentEditAreaIdx);
+  closeAreaModal();
+  toast('Area removed');
+}
+
+function closeAreaModal() { document.getElementById('area-modal').classList.remove('open'); pendingMapClick = null; }
+
+function clearMapMarkers() {
+  if (!confirm('Remove all pinned areas?')) return;
+  mapMarkers.forEach(m => { if (m.marker) deliveryMap.removeLayer(m.marker); });
+  mapMarkers = [];
+  renderMapAreaList();
+  updatePinCount();
+  toast('All areas cleared');
+}
+
+function updatePinCount() { document.getElementById('pin-count').textContent = `${mapMarkers.length} area${mapMarkers.length!==1?'s':''} pinned`; }
+
+function renderMapAreaList() {
+  const el = document.getElementById('map-area-list');
+  if (!mapMarkers.length) { el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No areas pinned yet. Search or click on the map.</div>'; return; }
+  el.innerHTML = mapMarkers.map((m, i) => {
+    const color = getMarkerColor(m.charge);
+    const chargeLabel = m.charge === 0 ? '<span class="area-pill-free">FREE</span>' : `<span class="map-area-charge-badge">PKR ${m.charge}</span>`;
+    return `<div class="map-area-item" onclick="deliveryMap.setView([${m.latlng.lat},${m.latlng.lng}],15);mapMarkers[${i}].marker.openPopup()">
+      <div class="map-area-color" style="background:${color}"></div>
+      <div class="map-area-name">${esc(m.areaName || 'Unnamed')}</div>
+      <div style="font-size:11px;color:var(--muted);font-family:var(--mono);flex-shrink:0">${m.latlng.lat.toFixed(3)},${m.latlng.lng.toFixed(3)}</div>
+      ${chargeLabel}
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="event.stopPropagation();editMapAreaByIdx(${i})" title="Edit">✏️</button>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();removeMapMarkerByIdx(${i})" title="Remove">×</button>
+    </div>`;
+  }).join('');
+}
+
+function applyMapAreasToForm() {
+  // Map markers → per_area object is built at save time, just confirm sync
+  const count = mapMarkers.length;
+  if (count === 0) { toast('No areas pinned yet', 'err'); return; }
+  toast(`${count} area${count!==1?'s':''} will be saved as per-area charges ✅`);
+}
+
+function addAreaManually() {
+  if (!deliveryMap) { toast('Map not loaded yet', 'err'); return; }
+  const center = deliveryMap.getCenter();
+  openAreaModalForPin(center, '');
+}
+
+// ─── Map Search ───────────────────────────────────
+function debounceMapSearch(val) {
+  clearTimeout(mapSearchTimer);
+  if (!val || val.length < 3) { document.getElementById('map-search-results').style.display = 'none'; return; }
+  mapSearchTimer = setTimeout(() => nominatimSearch(val), 400);
+}
+
+async function nominatimSearch(q) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&accept-language=en&countrycodes=pk`, { headers:{'Accept-Language':'en'} });
+    const results = await r.json();
+    const el = document.getElementById('map-search-results');
+    if (!results.length) { el.style.display = 'none'; return; }
+    el.innerHTML = results.map(res => `<div class="res-item" onclick="selectMapResult(${res.lat},${res.lon},'${(res.display_name||'').replace(/'/g,"\\'")}')">📍 ${esc(res.display_name)}</div>`).join('');
+    el.style.display = 'block';
+  } catch { document.getElementById('map-search-results').style.display = 'none'; }
+}
+
+async function mapSearchGo() {
+  const q = document.getElementById('map-search-input').value.trim();
+  if (!q) return;
+  await nominatimSearch(q);
+}
+
+function selectMapResult(lat, lon, displayName) {
+  document.getElementById('map-search-results').style.display = 'none';
+  document.getElementById('map-search-input').value = '';
+  const latlng = L.latLng(parseFloat(lat), parseFloat(lon));
+  if (deliveryMap) deliveryMap.setView(latlng, 14);
+  // Extract short name
+  const parts = displayName.split(',').map(s=>s.trim());
+  const shortName = parts.slice(0,2).join(', ');
+  openAreaModalForPin(latlng, shortName);
+}
+
+async function geocodeAndAddArea(areaName, charge, zoomTo=false) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(areaName + ' Karachi')}&limit=1`, { headers:{'Accept-Language':'en'} });
+    const d = await r.json();
+    if (d.length) {
+      const latlng = L.latLng(parseFloat(d[0].lat), parseFloat(d[0].lon));
+      if (deliveryMap) addMapMarker(latlng, areaName, charge, zoomTo);
+    }
+  } catch {}
+}
+
+// Close search results on outside click
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#map-search-results') && !e.target.closest('.map-search-bar')) {
+    document.getElementById('map-search-results').style.display = 'none';
+  }
+});
 
 // ═══════════════════════════════════════════════════
 // SMART SUGGESTIONS
@@ -1807,40 +1825,27 @@ function renderSugList(lang) {
   const items = (sugData.greeting && sugData.greeting[lang]) || [];
   el.innerHTML = items.length
     ? items.map((s,i) => `<div class="sug-row"><input class="fi" value="${esc(s)}" oninput="sugData.greeting['${lang}'][${i}]=this.value" placeholder="Suggestion text…"/><button class="btn btn-danger btn-sm btn-icon" onclick="removeSugRow('${lang}',${i})">×</button></div>`).join('')
-    : `<div style="font-size:12px;color:var(--muted);padding:8px 0">No suggestions. Add below or use quick presets.</div>`;
+    : `<div style="font-size:12px;color:var(--muted);padding:8px 0">No suggestions. Add below or use presets.</div>`;
 }
 
 function renderSugPresets(lang) {
   const el = document.getElementById('sug-presets');
   if (!el) return;
   const existing = (sugData.greeting && sugData.greeting[lang]) || [];
-  el.innerHTML = (SUG_PRESETS[lang]||[]).filter(p => !existing.includes(p)).map(p =>
-    `<span class="chip" onclick="addSugPreset('${lang}','${p.replace(/'/g,"\\'")}')">${esc(p)}</span>`
-  ).join('') || '<span style="font-size:12px;color:var(--muted)">All presets added</span>';
+  el.innerHTML = (SUG_PRESETS[lang]||[]).filter(p => !existing.includes(p)).map(p => `<span class="chip" onclick="addSugPreset('${lang}','${p.replace(/'/g,"\\'")}')">${esc(p)}</span>`).join('') || '<span style="font-size:12px;color:var(--muted)">All presets added</span>';
 }
 
-function addSugRow(lang) {
-  if (!sugData.greeting[lang]) sugData.greeting[lang] = [];
-  sugData.greeting[lang].push('');
-  renderSugList(lang);
-}
-function addSugPreset(lang, text) {
-  if (!sugData.greeting[lang]) sugData.greeting[lang] = [];
-  if (!sugData.greeting[lang].includes(text)) { sugData.greeting[lang].push(text); renderSugList(lang); renderSugPresets(lang); }
-}
-function removeSugRow(lang, i) {
-  sugData.greeting[lang].splice(i,1);
-  renderSugList(lang); renderSugPresets(lang);
-}
+function addSugRow(lang) { if (!sugData.greeting[lang]) sugData.greeting[lang] = []; sugData.greeting[lang].push(''); renderSugList(lang); }
+function addSugPreset(lang, text) { if (!sugData.greeting[lang]) sugData.greeting[lang] = []; if (!sugData.greeting[lang].includes(text)) { sugData.greeting[lang].push(text); renderSugList(lang); renderSugPresets(lang); } }
+function removeSugRow(lang, i) { sugData.greeting[lang].splice(i,1); renderSugList(lang); renderSugPresets(lang); }
 
 async function saveSuggestions() {
   const payload = { greeting: {} };
   ['en','ur','de'].forEach(l => { payload.greeting[l] = (sugData.greeting[l]||[]).filter(s => s.trim()); });
   try {
     const r = await fetch('/api/suggestions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    const d = await r.json();
-    toast(d.message || 'Suggestions saved!');
-  } catch { toast('Save failed','err'); }
+    const d = await r.json(); toast(d.message || 'Suggestions saved!');
+  } catch { toast('Save failed', 'err'); }
 }
 
 // ═══════════════════════════════════════════════════
@@ -1856,24 +1861,14 @@ async function loadAnalytics() {
     set('an-clicks',   d.total_clicks);
     set('an-cart',     d.total_cart_additions);
     const anColors = { 'an-product-clicks':'#1A56DB', 'an-product-search':'#6D28D9', 'an-languages':'#0D9E6A', 'an-sizes':'#C47A00', 'an-spice':'#E02C2C' };
-    const dataMap = {
-      'an-product-clicks': d.product_clicks,
-      'an-product-search': d.product_search,
-      'an-languages': d.supported_languages,
-      'an-sizes': d.size_preference,
-      'an-spice': d.spice_preference,
-    };
     const langLabel = { en:'🇬🇧 English', ur:'🇵🇰 اردو', de:'🇩🇪 Deutsch' };
+    const dataMap = { 'an-product-clicks': d.product_clicks, 'an-product-search': d.product_search, 'an-languages': d.supported_languages, 'an-sizes': d.size_preference, 'an-spice': d.spice_preference };
     Object.entries(dataMap).forEach(([id, data]) => {
-      const el = document.getElementById(id);
-      if (!el) return;
+      const el = document.getElementById(id); if (!el) return;
       const entries = Object.entries(data||{}).sort((a,b) => b[1]-a[1]).slice(0,8);
       if (!entries.length) { el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><div class="empty-title">No data yet</div></div>`; return; }
       const maxV = entries[0][1]||1;
-      el.innerHTML = entries.map(([k,v]) => `<div class="an-bar">
-        <div class="an-bar-row"><span style="font-weight:600">${esc(langLabel[k]||k)}</span><span style="color:var(--muted)">${v}</span></div>
-        <div class="an-track"><div class="an-fill" style="width:${Math.round(v/maxV*100)}%;background:${anColors[id]}"></div></div>
-      </div>`).join('');
+      el.innerHTML = entries.map(([k,v]) => `<div class="an-bar"><div class="an-bar-row"><span style="font-weight:600">${esc(langLabel[k]||k)}</span><span style="color:var(--muted)">${v}</span></div><div class="an-track"><div class="an-fill" style="width:${Math.round(v/maxV*100)}%;background:${anColors[id]}"></div></div></div>`).join('');
     });
   } catch { toast('Failed to load analytics','err'); }
 }
@@ -1887,7 +1882,7 @@ function toast(msg, type='ok') {
   t.innerHTML = `<span>${type==='err'?'❌':'✅'}</span><span>${esc(msg)}</span>`;
   t.className = 'show ' + (type==='err' ? 'err' : 'ok');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.className = '', 3000);
+  toastTimer = setTimeout(() => t.className = '', 3500);
 }
 </script>
 </body>
