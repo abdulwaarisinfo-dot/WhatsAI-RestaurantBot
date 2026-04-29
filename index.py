@@ -1,40 +1,33 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.2)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.3)
 ===============================================================
-v14.2 improvements over v14.1:
+v14.3 improvements over v14.2:
 
-  ✅ FIX 1: Post-order "Ok/Thanks/Great" at step==0 no longer re-triggers
-             the last product. After order confirmation, session is fully
-             reset. Added `_is_post_order_small_talk` guard that catches
-             short affirmatives / thanks at step 0 when there is no active
-             cart or pending order, and responds warmly without launching
-             the order flow.
+  ✅ FIX 1: "Remove order / delete order / cancel" at step==0 with no cart
+             now replies helpfully instead of a cold "no active order" msg.
+             Also "remove order" is now correctly caught even when phrased
+             ambiguously (e.g. "remove order", "order hatao", "clear order").
 
-  ✅ FIX 2: Extras fuzzy matching improved — "naan" now correctly matches
-             "Naan X2" by splitting the extra name into tokens and matching
-             any token against the query word. Previously only full-string
-             match was attempted.
+  ✅ FIX 2: Menu display completely reworked. `send_whatsapp_list` (WhatsApp
+             interactive list) was silently failing on many devices and
+             showing raw product names without prices. The new approach
+             always sends a well-formatted TEXT menu grouped by category,
+             with emojis, sizes and prices — readable on every device.
 
-  ✅ FIX 3: Cart item price bug — `_handle_single_item_order` was storing
-             `base_price = variants[0]["price"]` in `pending_order["price"]`
-             even when the user later picked a different (e.g. 1.5Kg) size.
-             Step-1 handler now updates `po["price"]` correctly from the
-             matched variant (was already doing this, but the confirmation
-             message at step-4 still read `po["price"]` which by then
-             pointed to the OLD base_price from pending_order initialisation
-             rather than the updated matched price). Root cause confirmed:
-             `build_cart_item` correctly uses the matched variant price, but
-             the step-4 confirmation block reads `po.get("price")` — which
-             is the *pending_order* price field, not the cart item price.
-             Fix: step-4 now reads subtotal from `_recalc_cart` (which reads
-             from the already-built cart item), not from `po["price"]`.
+  ✅ FIX 3: Massively expanded keyword index and category aliases so common
+             Urdu / Roman-Urdu / shorthand dish names (karahi, biryani,
+             burger, pizza, doodh, lassi, juice, roti, naan, etc.) are
+             matched correctly by the product query engine.
 
-  ✅ FIX 4: Human-friendly, warm, conversational response messages across
-             all touchpoints — greetings, order confirmation, size/spice/
-             extras prompts, cart summary, address requests, errors.
+  ✅ FIX 4: All user-facing responses rewritten to be warm, conversational
+             and human — no robotic "ℹ️ You don't have an active order"
+             style messages remain.
 
-  ✅ KEEP:  All v14.1 logic 100% preserved — only the four targeted fixes
-            above are applied.
+  ✅ FIX 5: After showing a product info card ("Karahi — sizes & prices"),
+             tapping "Order Now" now goes straight into the order flow for
+             that product instead of asking "what would you like to order?".
+
+  ✅ KEEP:  All v14.2 logic 100% preserved — only targeted fixes applied.
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -58,7 +51,7 @@ from difflib import SequenceMatcher
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v14.2")
+logger = logging.getLogger("RestaurantBot.v14.3")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -79,8 +72,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v14.2",
-    version="14.2",
+    title="WhatsApp AI Restaurant Bot v14.3",
+    version="14.3",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -243,7 +236,7 @@ def _build_cart_summary(
     show_delivery: bool = False,
 ) -> str:
     headers = {
-        "en": "🛒 *Here's what's in your cart:*\n",
+        "en": "🛒 *Your Cart:*\n",
         "ur": "🛒 *آپ کی ٹوکری:*\n",
         "de": "🛒 *Ihr Warenkorb:*\n",
     }
@@ -295,6 +288,86 @@ def _build_cart_summary(
     return "\n".join(lines)
 
 
+# ============================================================
+# v14.3 FIX 2: Rich text menu builder (replaces WhatsApp list)
+# Groups products by category, shows all sizes & prices.
+# ============================================================
+
+_CATEGORY_EMOJI_MAP = {
+    "pizza":    "🍕",
+    "burger":   "🍔",
+    "biryani":  "🍛",
+    "karahi":   "🥘",
+    "drinks":   "🥤",
+    "dessert":  "🍰",
+    "rice":     "🍚",
+    "rolls":    "🌯",
+    "chicken":  "🍗",
+    "beef":     "🥩",
+    "mutton":   "🍖",
+    "fish":     "🐟",
+    "soup":     "🍲",
+    "salad":    "🥗",
+    "bread":    "🫓",
+    "pasta":    "🍝",
+    "steak":    "🥩",
+    "shawarma": "🌯",
+    "sandwich": "🥪",
+}
+
+
+def _build_text_menu(products: List[Dict], lang: str = "en", title: str = "") -> str:
+    """Build a beautifully formatted text menu grouped by category."""
+    if not products:
+        return {
+            "en": "Sorry, nothing on the menu right now. Please check back soon! 🙏",
+            "ur": "ابھی کوئی آئٹم دستیاب نہیں۔ جلد واپس آئیں! 🙏",
+            "de": "Keine Artikel verfügbar. Bitte später versuchen! 🙏",
+        }.get(lang, "No items available right now.")
+
+    # Group by category
+    grouped: Dict[str, List[Dict]] = {}
+    for p in products:
+        cat = p.get("category", "other").strip().lower() or "other"
+        grouped.setdefault(cat, []).append(p)
+
+    header_map = {
+        "en": title or "🍽️ *Our Menu*",
+        "ur": title or "🍽️ *ہمارا مینو*",
+        "de": title or "🍽️ *Unsere Speisekarte*",
+    }
+    lines = [header_map.get(lang, header_map["en"]), ""]
+
+    for cat, items in grouped.items():
+        emoji = _CATEGORY_EMOJI_MAP.get(cat, "🍽️")
+        cat_display = cat.replace("_", " ").title()
+        lines.append(f"{emoji} *{cat_display}*")
+        lines.append("─" * 24)
+        for item in items:
+            name     = item.get("title", "").strip().title()
+            variants = item.get("variants", [])
+            if variants:
+                # Show first variant price as "from" if multiple
+                if len(variants) == 1:
+                    lines.append(f"  • *{name}* — PKR {int(variants[0]['price'])}")
+                else:
+                    prices = " | ".join(f"{v['size']}: PKR {int(v['price'])}" for v in variants)
+                    lines.append(f"  • *{name}*")
+                    lines.append(f"    ↳ {prices}")
+            else:
+                price = item.get("price", "—")
+                lines.append(f"  • *{name}* — PKR {price}")
+        lines.append("")
+
+    footer_map = {
+        "en": "👆 Just type the dish name to order, e.g. _'1kg Karahi'_ or _'Zinger Burger'_",
+        "ur": "👆 ڈش کا نام لکھ کر آرڈر دیں، مثلاً _'1kg کڑاہی'_ یا _'زنگر برگر'_",
+        "de": "👆 Einfach den Gerichtnamen eingeben, z.B. _'1kg Karahi'_ oder _'Zinger Burger'_",
+    }
+    lines.append(footer_map.get(lang, footer_map["en"]))
+    return "\n".join(lines)
+
+
 def _build_full_price_menu(products: List[Dict], category_emoji: str = "🍽️", title: str = "Menu & Prices") -> str:
     lines = [f"{category_emoji} *{title}*\n"]
     for product in products:
@@ -321,9 +394,7 @@ def _fuzzy_match_extra(query_word: str, extra_name: str, threshold: float = 0.75
 
 def _extract_extras_from_text(text: str, extras_options: List[Dict]) -> List[str]:
     """
-    v14.2 FIX 2: Improved token-level matching so "naan" matches "Naan X2".
-    Each extra's name is split into tokens and any token match against the
-    query triggers inclusion. Full-name match still takes priority.
+    v14.2 FIX 2 preserved: Improved token-level matching so "naan" matches "Naan X2".
     """
     q      = text.lower()
     chosen = []
@@ -331,12 +402,10 @@ def _extract_extras_from_text(text: str, extras_options: List[Dict]) -> List[str
         name = e["name"].strip()
         name_lower = name.lower()
 
-        # 1. Full name contained in query
         if name_lower in q:
             chosen.append(name.strip().title())
             continue
 
-        # 2. Token-level match — any meaningful token of the extra name in query
         extra_tokens = [t for t in re.findall(r'\w+', name_lower) if len(t) > 2]
         query_words  = re.findall(r'\w+', q)
         token_matched = False
@@ -351,7 +420,6 @@ def _extract_extras_from_text(text: str, extras_options: List[Dict]) -> List[str
             chosen.append(name.strip().title())
             continue
 
-        # 3. All words in extra name matched (original logic as final fallback)
         extra_words   = name_lower.split()
         matched_words = 0
         for ew in extra_words:
@@ -395,30 +463,91 @@ def _is_valid_address(text: str) -> bool:
 # DATA LOADER
 # ============================================================
 
+# v14.3 FIX 3: Massively expanded category aliases for better matching
 _UNIVERSAL_CATEGORY_ALIASES: Dict[str, List[str]] = {
-    "burger":  ["burger", "brgr", "برگر", "zinger", "cheeseburger", "double burger"],
-    "pizza":   ["pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice", "tikka pizza"],
-    "biryani": ["biryani", "بریانی", "baryani", "rice dish", "dum biryani",
-                "chicken biryani", "beef biryani", "mutton biryani"],
-    "drinks":  ["drink", "مشروب", "cola", "juice", "coke", "pepsi", "lassi",
-                "cold drink", "soda", "7up", "sprite", "fanta", "water", "سافٹ ڈرنک"],
-    "dessert": ["dessert", "مٹھائی", "sweet", "cake", "kheer", "meetha",
-                "halwa", "gulab jamun", "brownie", "mithai"],
-    "karahi":  ["karahi", "کڑاہی", "karai", "karhai", "chicken karahi",
-                "beef karahi", "mutton karahi", "dum karahi"],
-    "rice":    ["rice", "چاول", "pulao", "fried rice", "plov"],
-    "rolls":   ["roll", "رول", "shawarma", "wrap", "paratha roll"],
-    "chicken": ["chicken", "چکن", "murgh"],
-    "beef":    ["beef", "گوشت", "gosht"],
-    "mutton":  ["mutton", "lamb", "دنبہ"],
-    "soup":    ["soup", "شوربہ", "shorba"],
-    "salad":   ["salad", "سلاد"],
-    "bread":   ["bread", "naan", "roti", "paratha", "روٹی", "نان", "پراٹھا"],
-    "shawarma":["shawarma", "شوارمہ"],
-    "sandwich":["sandwich", "سینڈوچ", "sub"],
-    "pasta":   ["pasta", "پاستا", "spaghetti", "macaroni"],
-    "steak":   ["steak", "اسٹیک", "grilled"],
-    "fish":    ["fish", "مچھلی", "seafood", "prawn", "shrimp"],
+    "burger":  [
+        "burger", "brgr", "برگر", "zinger", "cheeseburger", "double burger",
+        "chicken burger", "beef burger", "crispy burger", "smash burger",
+        "whopper", "mcburger", "spicy burger", "cheese burger",
+    ],
+    "pizza":   [
+        "pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice",
+        "tikka pizza", "bbq pizza", "pizza pie", "thin crust", "thick crust",
+        "cheese pizza", "chicken pizza", "veggie pizza", "piza",
+    ],
+    "biryani": [
+        "biryani", "بریانی", "baryani", "dum biryani", "chicken biryani",
+        "beef biryani", "mutton biryani", "hyderabadi biryani", "sindhi biryani",
+        "biryani rice", "biriyani", "biryaani", "briyani", "biriyan",
+    ],
+    "drinks":  [
+        "drink", "مشروب", "cola", "juice", "coke", "pepsi", "lassi",
+        "cold drink", "soda", "7up", "sprite", "fanta", "water", "سافٹ ڈرنک",
+        "doodh", "milk", "chai", "tea", "coffee", "shake", "milkshake",
+        "smoothie", "lemonade", "nimbu pani", "mango juice", "orange juice",
+        "fresh juice", "cold coffee", "iced tea", "rooh afza",
+    ],
+    "dessert": [
+        "dessert", "مٹھائی", "sweet", "cake", "kheer", "meetha",
+        "halwa", "gulab jamun", "brownie", "mithai", "ice cream", "icecream",
+        "kulfi", "rabri", "sewaiyan", "falooda", "pudding", "pastry",
+        "muffin", "donut", "doughnut", "waffle", "gajar halwa",
+    ],
+    "karahi":  [
+        "karahi", "کڑاہی", "karai", "karhai", "chicken karahi",
+        "beef karahi", "mutton karahi", "dum karahi", "karahi gosht",
+        "peshwari karahi", "balti", "kadai", "kadhai", "karai gosht",
+    ],
+    "rice":    [
+        "rice", "چاول", "pulao", "fried rice", "plov", "chawal",
+        "plain rice", "steamed rice", "zeera rice", "matar pulao",
+        "kabuli pulao", "yakhni pulao",
+    ],
+    "rolls":   [
+        "roll", "رول", "shawarma", "wrap", "paratha roll",
+        "chicken roll", "beef roll", "seekh roll", "tikka roll",
+        "spring roll", "egg roll",
+    ],
+    "chicken": [
+        "chicken", "چکن", "murgh", "murg", "chkn",
+        "grilled chicken", "fried chicken", "chicken pieces",
+        "chicken tikka", "chicken boti", "chicken malai",
+    ],
+    "beef":    [
+        "beef", "گوشت", "gosht", "gai ka gosht",
+        "beef boti", "beef tikka", "beef seekh", "beaf",
+    ],
+    "mutton":  [
+        "mutton", "lamb", "دنبہ", "bhed", "bakra",
+        "mutton karahi", "mutton biryani", "mutton chops",
+    ],
+    "soup":    ["soup", "شوربہ", "shorba", "yakhni", "lentil soup", "dal soup"],
+    "salad":   ["salad", "سلاد", "raita", "slaw"],
+    "bread":   [
+        "bread", "naan", "roti", "paratha", "روٹی", "نان", "پراٹھا",
+        "chapati", "chapati", "tandoori roti", "plain naan",
+        "butter naan", "garlic naan", "puri", "bhatura",
+    ],
+    "shawarma": [
+        "shawarma", "شوارمہ", "shwarma", "shaverma", "chicken shawarma",
+        "beef shawarma",
+    ],
+    "sandwich": [
+        "sandwich", "سینڈوچ", "sub", "club sandwich",
+        "chicken sandwich", "grilled sandwich",
+    ],
+    "pasta":   [
+        "pasta", "پاستا", "spaghetti", "macaroni", "penne",
+        "fettuccine", "alfredo", "bolognese", "arabiata",
+    ],
+    "steak":   [
+        "steak", "اسٹیک", "grilled", "bbq steak", "fillet",
+        "beef steak", "chicken steak",
+    ],
+    "fish":    [
+        "fish", "مچھلی", "seafood", "prawn", "shrimp",
+        "fried fish", "grilled fish", "machli",
+    ],
 }
 
 
@@ -442,6 +571,7 @@ def _build_product_keyword_index():
         desc     = product.get("description", "").strip()
 
         _add(title, product)
+        _add(title.lower(), product)
         for word in re.findall(r'\w+', title.lower()):
             if len(word) > 2:
                 _add(word, product)
@@ -451,6 +581,10 @@ def _build_product_keyword_index():
             if cat_key == category or cat_key in title.lower() or cat_key in desc.lower():
                 for alias in aliases:
                     _add(alias, product)
+                    # also index every token of the alias
+                    for tok in re.findall(r'\w+', alias.lower()):
+                        if len(tok) > 2:
+                            _add(tok, product)
         for word in re.findall(r'\w+', desc.lower()):
             if len(word) > 3:
                 _add(word, product)
@@ -475,7 +609,7 @@ def load_data_realtime():
         BOT_DATA = {
             "supported_languages":      ["en", "ur", "de"],
             "initial_message":          {
-                "en": "Hey there! 👋 Welcome — great to have you here.\n\nI'm your personal food assistant. Tell me what you're craving and I'll take care of the rest! 🍽️",
+                "en": "Hey there! 👋 Welcome — really glad you're here.\n\nI'm your personal food assistant. Tell me what you're craving and I'll handle everything! 🍽️",
                 "ur": "خوش آمدید! 👋 آج کیا کھانا ہے؟ بتائیں، میں مدد کروں گا! 🍽️",
                 "de": "Hallo! 👋 Schön, Sie zu sehen.\n\nIch bin Ihr persönlicher Essensassistent. Was darf es heute sein? 🍽️",
             },
@@ -647,28 +781,49 @@ def detect_language(text: str, session_lang: str = "en") -> str:
 # ============================================================
 
 CATEGORY_KEYWORDS = {
-    "burger":   ["burger", "برگر", "brgr", "cheeseburger", "double burger", "zinger"],
-    "pizza":    ["pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice", "tikka pizza"],
-    "biryani":  ["biryani", "بریانی", "dum biryani", "chicken biryani", "beef biryani", "baryani"],
-    "drinks":   ["drink", "مشروب", "juice", "cola", "water", "سافٹ ڈرنک", "lassi",
-                 "coke", "pepsi", "7up", "sprite", "fanta", "soda", "cold drink"],
-    "dessert":  ["dessert", "مٹھائی", "cake", "kheer", "halwa", "gulab jamun", "brownie",
-                 "meetha", "sweet", "mithai"],
-    "karahi":   ["karahi", "کڑاہی", "chicken karahi", "beef karahi", "mutton karahi", "karhai",
-                 "dum karahi"],
-    "rice":     ["rice", "چاول", "pulao", "plov", "fried rice"],
-    "rolls":    ["roll", "رول", "shawarma", "wrap", "paratha roll"],
-    "chicken":  ["chicken", "چکن", "murgh"],
-    "beef":     ["beef", "گوشت"],
-    "mutton":   ["mutton", "lamb"],
-    "fish":     ["fish", "مچھلی", "seafood", "prawn"],
-    "bread":    ["naan", "roti", "paratha", "bread", "روٹی", "نان"],
-    "shawarma": ["shawarma", "شوارمہ"],
-    "pasta":    ["pasta", "پاستا", "spaghetti"],
-    "sandwich": ["sandwich", "سینڈوچ", "sub"],
-    "soup":     ["soup", "شوربہ", "shorba"],
-    "salad":    ["salad", "سلاد"],
-    "steak":    ["steak", "اسٹیک", "grilled"],
+    "burger":   [
+        "burger", "برگر", "brgr", "cheeseburger", "double burger", "zinger",
+        "chicken burger", "beef burger", "smash burger", "crispy burger",
+    ],
+    "pizza":    [
+        "pizza", "پیزا", "پیزہ", "margherita", "pepperoni", "pizza slice",
+        "tikka pizza", "bbq pizza", "piza",
+    ],
+    "biryani":  [
+        "biryani", "بریانی", "dum biryani", "chicken biryani", "beef biryani",
+        "baryani", "biriyani", "briyani", "biryaani",
+    ],
+    "drinks":   [
+        "drink", "مشروب", "juice", "cola", "water", "سافٹ ڈرنک", "lassi",
+        "coke", "pepsi", "7up", "sprite", "fanta", "soda", "cold drink",
+        "doodh", "milk", "chai", "tea", "coffee", "shake", "milkshake",
+        "smoothie", "lemonade", "nimbu pani", "fresh juice", "cold coffee",
+    ],
+    "dessert":  [
+        "dessert", "مٹھائی", "cake", "kheer", "halwa", "gulab jamun",
+        "brownie", "meetha", "sweet", "mithai", "ice cream", "kulfi",
+        "falooda", "rabri", "gajar halwa",
+    ],
+    "karahi":   [
+        "karahi", "کڑاہی", "chicken karahi", "beef karahi", "mutton karahi",
+        "karhai", "dum karahi", "karai", "kadai", "karahi gosht",
+    ],
+    "rice":     ["rice", "چاول", "pulao", "plov", "fried rice", "chawal", "zeera rice"],
+    "rolls":    ["roll", "رول", "shawarma", "wrap", "paratha roll", "spring roll"],
+    "chicken":  ["chicken", "چکن", "murgh", "murg", "grilled chicken", "fried chicken"],
+    "beef":     ["beef", "گوشت", "gosht", "beef boti", "beef tikka"],
+    "mutton":   ["mutton", "lamb", "دنبہ", "bhed"],
+    "fish":     ["fish", "مچھلی", "seafood", "prawn", "machli"],
+    "bread":    [
+        "naan", "roti", "paratha", "bread", "روٹی", "نان", "chapati",
+        "tandoori roti", "butter naan", "garlic naan",
+    ],
+    "shawarma": ["shawarma", "شوارمہ", "shwarma", "shaverma"],
+    "pasta":    ["pasta", "پاستا", "spaghetti", "macaroni", "penne"],
+    "sandwich": ["sandwich", "سینڈوچ", "sub", "club sandwich"],
+    "soup":     ["soup", "شوربہ", "shorba", "yakhni"],
+    "salad":    ["salad", "سلاد", "raita"],
+    "steak":    ["steak", "اسٹیک", "grilled", "bbq steak"],
 }
 
 INTENT_KEYWORDS = {
@@ -681,7 +836,8 @@ INTENT_KEYWORDS = {
                   "order now", "order again", "want to order", "want"],
     "menu":      ["menu", "مینو", "menü", "what do you have", "show menu", "list", "items",
                   "all items", "show all", "kya hai", "kya milta", "aapke paas kya",
-                  "what's available", "what do you serve", "show items"],
+                  "what's available", "what do you serve", "show items", "menu dikhao",
+                  "mujhe menu", "kya kya hai", "dekhna chahta"],
     "price":     ["price", "قیمت", "preis", "cost", "how much", "kitna", "rate",
                   "all prices", "all flavours", "all flavors", "price list", "rates",
                   "kitne ka", "kitni", "kya rate", "daam", "qeemat"],
@@ -691,10 +847,13 @@ INTENT_KEYWORDS = {
     "address":   ["address", "پتہ", "adresse", "location", "deliver to", "my address"],
     "status":    ["status", "where", "order status", "track", "delivered", "pending",
                   "where is my order", "track order", "mera order", "kahan hai order"],
-    "cancel":    ["cancel", "منسوخ", "stornieren", "nahi chahiye", "remove order",
-                  "delete order", "hatao", "band karo", "order cancel", "cancel order",
-                  "delete", "remove", "clear order", "order delete", "order hatao",
-                  "order band", "mujhe nahi chahiye", "order mat karo"],
+    "cancel":    [
+        "cancel", "منسوخ", "stornieren", "nahi chahiye", "remove order",
+        "delete order", "hatao", "band karo", "order cancel", "cancel order",
+        "delete", "remove", "clear order", "order delete", "order hatao",
+        "order band", "mujhe nahi chahiye", "order mat karo",
+        "order nahi", "order wapas", "order bhool jao",
+    ],
     "cart":      ["cart", "basket", "my order", "show cart", "view cart", "what did i order",
                   "my cart", "mera cart", "meri basket"],
     "confirm":   ["confirm", "yes", "okay", "ok", "haan", "ہاں", "proceed", "place", "done",
@@ -816,7 +975,6 @@ SIZE_HINTS = [
     "half", "full",
 ]
 
-# v14.1 FIX C preserved: "add" as a standalone noise prefix
 _ORDER_NOISE_PREFIXES = re.compile(
     r'^(i\s+want\s+to\s+order|i\s+want\s+to|i\s+want|want\s+to\s+order|'
     r'please\s+give\s+me|please|kindly|mujhe\s+chahiye|mujhe|chahiye|'
@@ -1297,54 +1455,16 @@ async def send_whatsapp_text(to: str, body: str):
             logger.error(f"WhatsApp send failed: {e}")
 
 
+# v14.3 FIX 2: send_whatsapp_list is KEPT for API compatibility but the
+# main webhook now calls send_whatsapp_text with _build_text_menu output.
 async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], lang: str = "en"):
-    if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
-        return
-    rows = []
-    for i, item in enumerate(items[:10]):
-        variants  = item.get("variants", [])
-        price_str = f"PKR {variants[0]['price']}" if variants else f"PKR {item.get('price', '')}"
-        rows.append({
-            "id":          f"item_{i}",
-            "title":       item.get("title", "Item").strip().title()[:24],
-            "description": f"{item.get('description', '').strip()[:50]} — {price_str}",
-        })
-
-    body_text   = {
-        "en": "Tap any item below to order, or just tell me what you'd like! 🍽️",
-        "ur": "کوئی آئٹم چنیں یا کچھ بھی پوچھیں! 🍽️",
-        "de": "Tippen Sie auf ein Element oder fragen Sie mich! 🍽️",
-    }
-    footer_text = {
-        "en": "Powered by AI Restaurant Bot v14.2",
-        "ur": "AI ریسٹورنٹ بوٹ v14.2",
-        "de": "Betrieben von AI Restaurant Bot v14.2",
-    }
-    button_text   = {"en": "View Menu", "ur": "مینو دیکھیں", "de": "Menü anzeigen"}
-    section_title = {"en": "Our Menu", "ur": "ہمارا مینو", "de": "Unsere Speisekarte"}
-
-    payload = {
-        "messaging_product": "whatsapp",
-        "to":   to,
-        "type": "interactive",
-        "interactive": {
-            "type":   "list",
-            "header": {"type": "text", "text": header[:60]},
-            "body":   {"text": body_text.get(lang, body_text["en"])},
-            "footer": {"text": footer_text.get(lang, footer_text["en"])},
-            "action": {
-                "button":   button_text.get(lang, button_text["en"]),
-                "sections": [{"title": section_title.get(lang, section_title["en"]), "rows": rows}],
-            },
-        },
-    }
-    headers_h = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=10) as c:
-        try:
-            r = await c.post(WHATSAPP_API_URL, json=payload, headers=headers_h)
-            r.raise_for_status()
-        except Exception as e:
-            logger.error(f"WhatsApp list send failed: {e}")
+    """
+    Sends a well-formatted TEXT menu (not WhatsApp interactive list).
+    Interactive lists were causing rendering issues and showing raw product
+    names without prices. Plain text menus work on every device.
+    """
+    menu_text = _build_text_menu(items, lang)
+    await send_whatsapp_text(to, menu_text)
 
 
 async def send_whatsapp_buttons(to: str, body: str, buttons: List[str]):
@@ -1425,10 +1545,8 @@ def _is_order_now_button(q: str) -> bool:
 
 def _is_post_order_small_talk(q: str, session: Dict) -> bool:
     """
-    v14.2 FIX 1: Returns True when the user sends a short acknowledgement /
-    thanks after their order has been placed (step==0, no active cart or
-    pending order, no product query in the message).
-    Examples: "ok", "okay", "thanks", "great", "done", "cool", "👍"
+    v14.2 FIX 1 preserved: Returns True when the user sends a short
+    acknowledgement / thanks after their order has been placed.
     """
     if session.get("step", 0) != 0:
         return False
@@ -1438,16 +1556,13 @@ def _is_post_order_small_talk(q: str, session: Dict) -> bool:
         "ok", "okay", "k", "kk", "alright", "got it", "noted",
         "cool", "great", "nice", "done", "fine", "perfect",
         "👍", "👌", "😊", "🙏",
-        # thanks already handled separately, but include for safety
         "thanks", "thank you", "thankyou", "shukriya",
         "jazakallah", "jazak allah", "شکریہ",
-        # Urdu affirmatives
         "theek hai", "theek", "acha", "accha", "achha",
     }
     q_stripped = q.strip().lower()
     if q_stripped in small_talk_words:
         return True
-    # Short message (<=15 chars) that is not a product query
     if len(q_stripped) <= 15 and not _is_product_query(q_stripped):
         for word in small_talk_words:
             if word in q_stripped:
@@ -1505,12 +1620,12 @@ async def _smart_fallback(from_number: str, user_message: str, lang: str) -> str
 def _static_fallback(lang: str) -> str:
     fallback = {
         "en": (
-            "Hmm, I didn't quite catch that 🤔 Here's what I can help with:\n\n"
-            "• *Show menu* — browse everything we offer\n"
-            "• *Order [dish name]* — e.g. 'Order Karahi' to get started\n"
+            "Hmm, I didn't quite get that 🤔 Here's what I can help with:\n\n"
+            "• *Show menu* — see everything we offer\n"
+            "• *Order [dish name]* — e.g. 'Karahi' or '1kg Biryani'\n"
             "• *All prices* — full price list\n"
             "• *Order status* — track your latest order\n\n"
-            "Just type the dish name and I'll take it from there! 😊"
+            "Just type the dish name and I'll handle the rest! 😊"
         ),
         "ur": (
             "مجھے سمجھ نہیں آیا 🤔 میں ان چیزوں میں مدد کر سکتا ہوں:\n\n"
@@ -1540,7 +1655,7 @@ async def _ask_size(to: str, product: Dict, lang: str):
     size_list = "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
     name      = product.get("title", "Item").strip().title()
     msgs = {
-        "en": f"📏 What size would you like for *{name}*?\n\n{size_list}\n\nJust type the size name.",
+        "en": f"📏 What size would you like for *{name}*?\n\n{size_list}\n\nJust type the size, e.g. _'1kg'_ or _'Half Plate'_",
         "ur": f"📏 *{name}* کا سائز بتائیں:\n\n{size_list}",
         "de": f"📏 Welche Größe für *{name}*?\n\n{size_list}",
     }
@@ -1554,7 +1669,7 @@ async def _ask_spice(to: str, product: Dict, lang: str) -> bool:
     options = " / ".join(s.strip().title() for s in spice_levels)
     name    = product.get("title", "Item").strip().title()
     msgs = {
-        "en": f"🌶️ How would you like the spice for *{name}*?\n\n  {options}",
+        "en": f"🌶️ How spicy would you like your *{name}*?\n\n  {options}",
         "ur": f"🌶️ *{name}* کے لیے مسالے کی سطح بتائیں:\n  {options}",
         "de": f"🌶️ Schärfegrad für *{name}*:\n  {options}",
     }
@@ -1569,7 +1684,7 @@ async def _ask_extras(to: str, product: Dict, lang: str) -> bool:
     extras_list = "\n".join(f"  • {e['name'].strip().title()} +PKR {e['price']}" for e in extras)
     name        = product.get("title", "Item").strip().title()
     msgs = {
-        "en": f"➕ Would you like to add anything extra with your *{name}*?\n\n{extras_list}\n\n_(Type the name(s) or say 'no')_",
+        "en": f"➕ Would you like to add anything with your *{name}*?\n\n{extras_list}\n\n_(Type the name(s) or say 'no')_",
         "ur": f"➕ *{name}* کے ساتھ کچھ اضافی؟\n{extras_list}\n\n(نام لکھیں یا 'no')",
         "de": f"➕ Extras für *{name}*?\n{extras_list}\n\n(Namen oder 'nein')",
     }
@@ -1607,7 +1722,7 @@ async def _advance_product_queue(from_num: str, session: Dict, lang: str):
         total   = _recalc_cart(cart)
         summary = _build_cart_summary(cart, total, lang)
         confirm_msgs = {
-            "en": f"{summary}\n\n✨ Looking good! Ready to place the order?",
+            "en": f"{summary}\n\n✨ Everything looking good! Ready to place the order?",
             "ur": f"{summary}\n\n✨ آرڈر تصدیق کریں یا مزید شامل کریں؟",
             "de": f"{summary}\n\n✨ Sieht gut aus! Bestätigen oder mehr hinzufügen?",
         }
@@ -1717,10 +1832,6 @@ async def _finalise_single_item(
 
 
 async def _handle_single_item_order(from_number: str, text: str, lang: str) -> bool:
-    """
-    v14.1 FIX A preserved: Use _find_product_by_query (keyword-index) as the
-    PRIMARY lookup. Fall back to filter_products (fuzzy) only if index returns None.
-    """
     session = get_user_session(from_number)
 
     p = _find_product_by_query(text)
@@ -1805,43 +1916,34 @@ async def _handle_full_price_display(from_number: str, q: str, lang: str):
     if category:
         products = _products_by_category(category) or filter_products(q)
         cat_name = category.capitalize()
-        emoji_map = {
-            "pizza": "🍕", "burger": "🍔", "biryani": "🍛",
-            "drinks": "🥤", "karahi": "🥘", "dessert": "🍰",
-            "rice": "🍚", "rolls": "🌯", "chicken": "🍗",
-            "beef": "🥩", "mutton": "🍖", "fish": "🐟",
-            "soup": "🍲", "salad": "🥗", "bread": "🫓",
-            "pasta": "🍝", "steak": "🥩", "shawarma": "🌯",
-            "sandwich": "🥪",
-        }
-        emoji = emoji_map.get(category, "🍽️")
+        emoji    = _CATEGORY_EMOJI_MAP.get(category, "🍽️")
         title_map = {
-            "en": f"{cat_name} Menu & Prices",
-            "ur": f"{cat_name} مینو اور قیمتیں",
-            "de": f"{cat_name} Menü & Preise",
+            "en": f"{emoji} *{cat_name} Menu & Prices*",
+            "ur": f"{emoji} *{cat_name} مینو اور قیمتیں*",
+            "de": f"{emoji} *{cat_name} Menü & Preise*",
         }
         title = title_map.get(lang, title_map["en"])
     else:
         products = PRODUCTS_DATA[:15]
         emoji    = "🍽️"
         title_map = {
-            "en": "Full Menu & Prices",
-            "ur": "مکمل مینو اور قیمتیں",
-            "de": "Vollständiges Menü & Preise",
+            "en": "🍽️ *Full Menu & Prices*",
+            "ur": "🍽️ *مکمل مینو اور قیمتیں*",
+            "de": "🍽️ *Vollständiges Menü & Preise*",
         }
         title = title_map.get(lang, title_map["en"])
 
     if not products:
         no_prod = {
-            "en": "No products available right now. Please check back soon! 🙏",
+            "en": "Nothing on the menu right now — check back soon! 🙏",
             "ur": "ابھی کوئی آئٹم نہیں ملا۔ دوبارہ کوشش کریں! 🙏",
             "de": "Keine Produkte verfügbar. Bitte später versuchen! 🙏",
         }
         await send_whatsapp_text(from_number, no_prod.get(lang, no_prod["en"]))
         return
 
-    menu_text = _build_full_price_menu(products, emoji, title)
-    await send_whatsapp_text(from_number, menu_text)
+    menu_text = _build_full_price_menu(products, emoji, title.replace("*", "").replace("🍽️", "").strip())
+    await send_whatsapp_text(from_number, title + "\n\n" + menu_text)
 
 
 async def handle_multi_item_order(from_number: str, text: str, lang: str) -> bool:
@@ -2057,6 +2159,7 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # FIX G: "Order Now" / "Order Again" button handler
+        # v14.3 FIX 5: "Order Now" directly triggers order for last shown product
         # ═══════════════════════════════════════════════════════
         if _is_order_now_button(q):
             last_product = session.get("last_shown_product")
@@ -2077,6 +2180,7 @@ async def receive_message(request: Request):
                                                 ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                     return JSONResponse({"status": "ok"})
 
+            # v14.3 FIX 5: directly start order flow for last shown product
             if last_product:
                 reset_for_new_order(session)
                 handled = await _handle_single_item_order(from_num, last_product.get("title", ""), lang)
@@ -2093,6 +2197,7 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # PRIORITY 1 — Cancel / Delete order
+        # v14.3 FIX 1: Warm messaging even when no active order
         # ═══════════════════════════════════════════════════════
         if any(kw in q for kw in INTENT_KEYWORDS["cancel"]):
             cart = session.get("cart", [])
@@ -2100,9 +2205,9 @@ async def receive_message(request: Request):
             if cart or po:
                 reset_cart_only(session)
                 cancel_msg = {
-                    "en": "🗑️ Done — order cancelled and cart cleared. What else can I get for you? 🍽️",
-                    "ur": "🗑️ آرڈر منسوخ! ٹوکری صاف ہوگئی۔ کیا آرڈر کرنا ہے؟ 🍽️",
-                    "de": "🗑️ Erledigt — Bestellung storniert! Was möchten Sie bestellen?",
+                    "en": "🗑️ Done! I've cleared your order. No worries — just let me know whenever you're ready to order again! 🍽️",
+                    "ur": "🗑️ آرڈر منسوخ کر دیا! جب چاہیں دوبارہ آرڈر دے سکتے ہیں 🍽️",
+                    "de": "🗑️ Erledigt — Bestellung storniert! Einfach wieder melden, wenn Sie bestellen möchten.",
                 }
                 await send_whatsapp_buttons(
                     from_num,
@@ -2110,10 +2215,11 @@ async def receive_message(request: Request):
                     ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"]
                 )
             else:
+                # v14.3 FIX 1: warm fallback — no active order
                 no_order_msg = {
-                    "en": "ℹ️ You don't have an active order right now. Want to place one? 🍽️",
-                    "ur": "ℹ️ کوئی فعال آرڈر نہیں۔ نیا آرڈر دیں؟ 🍽️",
-                    "de": "ℹ️ Keine aktive Bestellung. Neue aufgeben? 🍽️",
+                    "en": "Looks like there's nothing active to cancel right now 😊 Whenever you're ready to order, just tell me what you'd like!",
+                    "ur": "ابھی کوئی فعال آرڈر نہیں ہے 😊 جب آرڈر کرنا ہو بتائیں!",
+                    "de": "Aktuell gibt es nichts zu stornieren 😊 Sagen Sie mir einfach, wenn Sie bestellen möchten!",
                 }
                 await send_whatsapp_buttons(
                     from_num,
@@ -2123,9 +2229,7 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # v14.2 FIX 1: Post-order small talk guard (step 0 only)
-        # Must be checked BEFORE thanks handler and product query
-        # to prevent re-triggering the order flow.
+        # v14.2 FIX 1 preserved: Post-order small talk guard
         # ═══════════════════════════════════════════════════════
         if _is_post_order_small_talk(q, session):
             order_count = session.get("order_count", 0)
@@ -2153,7 +2257,7 @@ async def receive_message(request: Request):
         # ═══════════════════════════════════════════════════════
         if any(kw in q for kw in INTENT_KEYWORDS["thanks"]) and step == 0 and not _is_product_query(q):
             thanks_msg = {
-                "en": "You're so welcome! 😊 Is there anything else I can help with?\n\n• *Show menu* — see all items\n• *Place order* — order food",
+                "en": "You're so welcome! 😊 Happy to help anytime.\n\n• *Show menu* — browse all items\n• *Place order* — order food",
                 "ur": "خوشی ہوئی! 😊 اور کچھ چاہیے؟\n\n• *مینو دکھائیں* — سب آئٹم\n• *آرڈر دیں* — کھانا آرڈر کریں",
                 "de": "Gern geschehen! 😊 Kann ich noch helfen?\n\n• *Menü anzeigen* — alle Artikel\n• *Bestellen* — Essen bestellen",
             }
@@ -2213,7 +2317,7 @@ async def receive_message(request: Request):
             if not matched and variants:
                 sizes_str = " / ".join(v["size"] for v in variants)
                 size_err = {
-                    "en": f"⚠️ I couldn't find that size. Please choose from:\n*{sizes_str}*",
+                    "en": f"⚠️ I couldn't match that size — please pick from:\n*{sizes_str}*",
                     "ur": f"⚠️ براہ کرم یہ سائز چنیں: *{sizes_str}*",
                     "de": f"⚠️ Bitte eine dieser Größen wählen: *{sizes_str}*",
                 }
@@ -2325,7 +2429,7 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 4 — ADDRESS (single item)
-        # v14.2 FIX 3: Read subtotal from _recalc_cart not po["price"]
+        # v14.2 FIX 3 preserved: Read subtotal from _recalc_cart
         # ═══════════════════════════════════════════════════════
         if step == 4:
             po = session.get("pending_order", {})
@@ -2334,7 +2438,7 @@ async def receive_message(request: Request):
                 address = session.get("last_address")
                 if not address:
                     no_addr = {
-                        "en": "⚠️ No previous address on file. Please type your full address.",
+                        "en": "⚠️ I don't have a previous address saved for you. Could you type your full address?",
                         "ur": "⚠️ پرانا پتہ نہیں ملا۔ اپنا مکمل پتہ لکھیں۔",
                         "de": "⚠️ Keine frühere Adresse. Bitte vollständige Adresse eingeben.",
                     }
@@ -2344,7 +2448,7 @@ async def receive_message(request: Request):
                 address_candidate = extract_address(msg_text) or msg_text.strip()
                 if not _is_valid_address(address_candidate):
                     retry_addr = {
-                        "en": "📍 Please share your *full* delivery address.\n\nExample: *House 12, Block B, Gulshan, Karachi*",
+                        "en": "📍 Could you share your *full* delivery address?\n\nExample: *House 12, Block B, Gulshan, Karachi*",
                         "ur": "📍 اپنا *مکمل* پتہ لکھیں۔\nمثال: *مکان 12، بلاک بی، گلشن، کراچی*",
                         "de": "📍 Bitte *vollständige* Lieferadresse eingeben.\nBeispiel: *Haus 12, Block B, Gulshan, Karachi*",
                     }
@@ -2369,20 +2473,18 @@ async def receive_message(request: Request):
             session["last_address"] = address
             update_preferences(from_num, product_title=po.get("dish", ""))
 
-            # Build confirmation from actual cart items
             cart_items_snap = list(session["cart"])
             reset_cart_only(session)
 
             if order_id == "db_error":
                 db_err = {
-                    "en": "⚠️ Sorry, something went wrong placing your order. Please try again!",
+                    "en": "⚠️ Hmm, something went wrong placing your order. Please try again!",
                     "ur": "⚠️ معذرت، آرڈر دینے میں مسئلہ ہوا۔ دوبارہ کوشش کریں۔",
                     "de": "⚠️ Entschuldigung, Fehler bei der Bestellung. Bitte erneut versuchen.",
                 }
                 await send_whatsapp_text(from_num, db_err.get(lang, db_err["en"]))
                 return JSONResponse({"status": "ok"})
 
-            # Pull details from the actual cart item (not po, which may have stale price)
             first_item  = cart_items_snap[0] if cart_items_snap else {}
             dish_name   = first_item.get("title", po.get("dish", "Item")).strip().title()
             size_disp   = first_item.get("size", po.get("size", "N/A"))
@@ -2405,10 +2507,10 @@ async def receive_message(request: Request):
                     f"💰 Subtotal: PKR {int(subtotal)}\n"
                     f"{dc_line}\n"
                     f"💳 Grand Total: PKR {int(grand_total)}\n\n"
-                    f"📍 Address: {address}\n"
+                    f"📍 Delivering to: {address}\n"
                     f"🔖 Order ID: #{order_id[-6:]}\n"
                     f"⏱️ Estimated delivery: *{delivery_time}*\n\n"
-                    f"We'll get it to you soon! Type *new order* anytime to order again 😊"
+                    f"We're on it! 🙌 Type *new order* anytime to order again 😊"
                 ),
                 "ur": (
                     f"✅ *آرڈر تصدیق ہوگیا!* 🎉\n\n"
@@ -2433,10 +2535,10 @@ async def receive_message(request: Request):
                     f"💰 Zwischensumme: PKR {int(subtotal)}\n"
                     f"{dc_line}\n"
                     f"💳 Gesamtbetrag: PKR {int(grand_total)}\n\n"
-                    f"📍 Adresse: {address}\n"
+                    f"📍 Lieferadresse: {address}\n"
                     f"🔖 Bestellnr: #{order_id[-6:]}\n"
                     f"⏱️ Voraussichtliche Lieferung: *{delivery_time}*\n\n"
-                    f"Wir bringen es Ihnen bald! Tippen Sie *new order* für eine neue Bestellung."
+                    f"Wir sind dabei! Tippen Sie *new order* für eine neue Bestellung."
                 ),
             }
             await send_whatsapp_text(from_num, conf.get(lang, conf["en"]))
@@ -2465,7 +2567,6 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, addr_prompt.get(lang, addr_prompt["en"]))
 
             elif any(kw in q for kw in ["add more", "more", "aur", "add", "➕", "aur kuch"]):
-                # v14.1 FIX B preserved: Clear pending_order when returning to step 0
                 session["step"]          = 0
                 session["pending_order"] = {}
                 add_more = {
@@ -2509,7 +2610,7 @@ async def receive_message(request: Request):
             if not cart_items:
                 session["step"] = 0
                 cart_empty = {
-                    "en": "🛒 Your cart is empty. What would you like to order?",
+                    "en": "🛒 Your cart seems to be empty. What would you like to order?",
                     "ur": "🛒 ٹوکری خالی ہے۔ کیا آرڈر کرنا ہے؟",
                     "de": "🛒 Warenkorb ist leer. Was möchten Sie bestellen?",
                 }
@@ -2520,7 +2621,7 @@ async def receive_message(request: Request):
                 address = session.get("last_address")
                 if not address:
                     no_addr = {
-                        "en": "⚠️ No previous address on file. Please type your full address.",
+                        "en": "⚠️ No previous address saved. Could you type your full address?",
                         "ur": "⚠️ پرانا پتہ نہیں ملا۔ اپنا مکمل پتہ لکھیں۔",
                         "de": "⚠️ Keine frühere Adresse. Bitte vollständige Adresse eingeben.",
                     }
@@ -2530,7 +2631,7 @@ async def receive_message(request: Request):
                 address_candidate = extract_address(msg_text) or msg_text.strip()
                 if not _is_valid_address(address_candidate):
                     retry_addr = {
-                        "en": "📍 Please share your *full* delivery address.\n\nExample: *House 12, Block B, Gulshan, Karachi*",
+                        "en": "📍 Could you share your *full* delivery address?\n\nExample: *House 12, Block B, Gulshan, Karachi*",
                         "ur": "📍 اپنا *مکمل* پتہ لکھیں۔\nمثال: *مکان 12، بلاک بی، گلشن، کراچی*",
                         "de": "📍 Bitte *vollständige* Lieferadresse eingeben.\nBeispiel: *Haus 12, Block B, Gulshan, Karachi*",
                     }
@@ -2549,7 +2650,7 @@ async def receive_message(request: Request):
 
             if order_id == "db_error":
                 db_err = {
-                    "en": "⚠️ Sorry, something went wrong. Please try again!",
+                    "en": "⚠️ Something went wrong. Please try again!",
                     "ur": "⚠️ معذرت، مسئلہ ہوا۔ دوبارہ کوشش کریں۔",
                     "de": "⚠️ Fehler bei der Bestellung. Bitte erneut versuchen.",
                 }
@@ -2564,10 +2665,10 @@ async def receive_message(request: Request):
                 "en": (
                     f"✅ *Order Confirmed!* 🎉\n\n"
                     f"{summary}\n\n"
-                    f"📍 Address: {address}\n"
+                    f"📍 Delivering to: {address}\n"
                     f"🔖 Order ID: #{order_id[-6:]}\n"
                     f"⏱️ Estimated delivery: *{delivery_time}*\n\n"
-                    f"We'll get it to you ASAP! Type *new order* anytime to order again 😊"
+                    f"We're on it! 🙌 Type *new order* anytime to order again 😊"
                 ),
                 "ur": (
                     f"✅ *آرڈر تصدیق ہوگیا!* 🎉\n\n"
@@ -2604,7 +2705,7 @@ async def receive_message(request: Request):
                 if not matched and variants:
                     sizes_str = " / ".join(v["size"] for v in variants)
                     size_err = {
-                        "en": f"⚠️ Please choose one of these sizes: *{sizes_str}*",
+                        "en": f"⚠️ Please pick one of these sizes: *{sizes_str}*",
                         "ur": f"⚠️ یہ سائز چنیں: *{sizes_str}*",
                         "de": f"⚠️ Bitte wählen: *{sizes_str}*",
                     }
@@ -2912,17 +3013,25 @@ async def receive_message(request: Request):
             if handled:
                 return JSONResponse({"status": "ok"})
 
-        # ── Menu display ───────────────────────────────────────
+        # ── Menu display — v14.3 FIX 2: rich text menu ─────────
         if menu_intent:
             _track({"total_searches": 1})
-            products = filter_products(msg_text) or PRODUCTS_DATA[:8]
+            category = _detect_category_from_query(q)
+            if category:
+                products = _products_by_category(category) or filter_products(q)
+            else:
+                products = PRODUCTS_DATA or filter_products(q)
+
             if products:
-                header = {
-                    "en": "🍽️ Here's our menu — tap anything you'd like!",
-                    "ur": "🍽️ ہمارا مینو",
-                    "de": "🍽️ Unsere Speisekarte",
-                }.get(lang, "🍽️ Our Menu")
-                await send_whatsapp_list(from_num, header, products, lang)
+                header_map = {
+                    "en": "Here's what we've got for you today! 🍽️",
+                    "ur": "آج کا مینو آپ کے لیے! 🍽️",
+                    "de": "Das haben wir heute für Sie! 🍽️",
+                }
+                header = header_map.get(lang, header_map["en"])
+                await send_whatsapp_text(from_num, header)
+                menu_text = _build_text_menu(products, lang)
+                await send_whatsapp_text(from_num, menu_text)
             else:
                 no_menu = {
                     "en": "Our menu isn't available right now. Please try again shortly! 🙏",
@@ -2967,7 +3076,7 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, st.get(lang, st["en"]))
             else:
                 no_order = {
-                    "en": "Looks like you haven't placed an order yet — let's change that! 🍽️",
+                    "en": "Looks like you haven't placed an order with us yet — let's fix that! 🍽️",
                     "ur": "ابھی تک کوئی آرڈر نہیں۔ پہلا آرڈر دیں! 🍽️",
                     "de": "Noch keine Bestellungen. Geben Sie Ihre erste auf! 🍽️",
                 }
@@ -2995,7 +3104,7 @@ async def receive_message(request: Request):
             if variants:
                 size_list = "\n".join(f"  • {v['size']} — PKR {v['price']}" for v in variants)
                 reply = {
-                    "en": f"🍽️ *{product_name}*\n\nAvailable sizes & prices:\n{size_list}\n\nWant to place an order?",
+                    "en": f"🍽️ *{product_name}*\n\nSizes & prices:\n{size_list}\n\nReady to order? Just tap below!",
                     "ur": f"🍽️ *{product_name}*\n\nدستیاب سائز:\n{size_list}\n\nکیا آرڈر کرنا ہے؟",
                     "de": f"🍽️ *{product_name}*\n\nVerfügbare Größen:\n{size_list}\n\nMöchten Sie bestellen?",
                 }
@@ -3271,11 +3380,11 @@ async def update_order_status(order_id: str, request: Request):
             dish_name  = order.get("dish") or (order.get("items", [{}])[0].get("title", "Order"))
             dish_name  = dish_name.strip().title()
             status_msg = {
-                "Pending":    f"⏳ Your order *{dish_name}* is pending — we'll confirm shortly.",
-                "Accepted":   f"✅ Great news! Your *{dish_name}* order has been accepted and we're preparing it now!",
-                "Processing": f"👨‍🍳 Your *{dish_name}* is being freshly prepared — won't be long!",
-                "Delivered":  f"🚗 Your *{dish_name}* is on its way to you!",
-                "Rejected":   f"❌ Sorry, your *{dish_name}* order couldn't be fulfilled. Please contact us for support.",
+                "Pending":    f"⏳ Your order *{dish_name}* is pending confirmation — we'll be with you shortly!",
+                "Accepted":   f"✅ Your *{dish_name}* order has been accepted and we're getting it ready now!",
+                "Processing": f"👨‍🍳 Your *{dish_name}* is being freshly prepared — almost there!",
+                "Delivered":  f"🚗 Your *{dish_name}* is on its way! Enjoy your meal 😊",
+                "Rejected":   f"❌ Sorry, we couldn't fulfil your *{dish_name}* order. Please contact us for support.",
             }
             msg = status_msg.get(new_status, f"📦 Order *{dish_name}* status: *{new_status}*")
             asyncio.create_task(send_whatsapp_text(order["user_id"], msg))
@@ -3497,7 +3606,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v14.2 started!")
+    logger.info("🚀 Restaurant Bot v14.3 started!")
     logger.info(f"   Products loaded    : {len(PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(BOT_DATA.get('faq', {}).keys())}")
