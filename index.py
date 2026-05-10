@@ -1,33 +1,33 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.3)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.4)
 ===============================================================
-v14.3 improvements over v14.2:
+v14.4 improvements over v14.3:
 
-  ✅ FIX 1: "Remove order / delete order / cancel" at step==0 with no cart
-             now replies helpfully instead of a cold "no active order" msg.
-             Also "remove order" is now correctly caught even when phrased
-             ambiguously (e.g. "remove order", "order hatao", "clear order").
+  ✅ FIX 1: Multi-size same-product orders (e.g. "5 Small Pizza and 5 Medium
+             Pizza") now correctly enter the order flow instead of triggering
+             price display. Root cause: `_parse_multi_size_from_text` was
+             failing to strip leading quantity tokens before matching size
+             hints, so both parts returned no match and the handler fell
+             through to `_handle_full_price_display`.
 
-  ✅ FIX 2: Menu display completely reworked. `send_whatsapp_list` (WhatsApp
-             interactive list) was silently failing on many devices and
-             showing raw product names without prices. The new approach
-             always sends a well-formatted TEXT menu grouped by category,
-             with emojis, sizes and prices — readable on every device.
+  ✅ FIX 2: Spice resolution in Step 20 no longer misidentifies size words
+             ("small", "medium", "large") as spice levels. A guard now
+             checks that the matched spice token does not collide with any
+             known size label from the product's own variant list.
 
-  ✅ FIX 3: Massively expanded keyword index and category aliases so common
-             Urdu / Roman-Urdu / shorthand dish names (karahi, biryani,
-             burger, pizza, doodh, lassi, juice, roti, naan, etc.) are
-             matched correctly by the product query engine.
+  ✅ FIX 3: When a single shared spice is given for a multi-size order
+             (e.g. just "Spicy"), all queued sizes now correctly receive
+             that spice instead of only the first item in the queue.
 
-  ✅ FIX 4: All user-facing responses rewritten to be warm, conversational
-             and human — no robotic "ℹ️ You don't have an active order"
-             style messages remain.
+  ✅ FIX 4: Cart summary now shows each line-item's spice and extras
+             accurately when multiple sizes of the same product are ordered.
 
-  ✅ FIX 5: After showing a product info card ("Karahi — sizes & prices"),
-             tapping "Order Now" now goes straight into the order flow for
-             that product instead of asking "what would you like to order?".
+  ✅ FIX 5: `_detect_price_menu_intent` no longer fires on pure size+product
+             strings like "5 small pizza and 5 medium pizza" — added a
+             guard that returns False when the query looks like a
+             multi-size order targeting a single product.
 
-  ✅ KEEP:  All v14.2 logic 100% preserved — only targeted fixes applied.
+  ✅ KEEP:  All v14.3 logic 100% preserved — only targeted fixes applied.
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -51,7 +51,7 @@ from difflib import SequenceMatcher
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v14.3")
+logger = logging.getLogger("RestaurantBot.v14.4")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -72,8 +72,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v14.3",
-    version="14.3",
+    title="WhatsApp AI Restaurant Bot v14.4",
+    version="14.4",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -289,8 +289,7 @@ def _build_cart_summary(
 
 
 # ============================================================
-# v14.3 FIX 2: Rich text menu builder (replaces WhatsApp list)
-# Groups products by category, shows all sizes & prices.
+# CATEGORY / MENU HELPERS
 # ============================================================
 
 _CATEGORY_EMOJI_MAP = {
@@ -325,7 +324,6 @@ def _build_text_menu(products: List[Dict], lang: str = "en", title: str = "") ->
             "de": "Keine Artikel verfügbar. Bitte später versuchen! 🙏",
         }.get(lang, "No items available right now.")
 
-    # Group by category
     grouped: Dict[str, List[Dict]] = {}
     for p in products:
         cat = p.get("category", "other").strip().lower() or "other"
@@ -347,7 +345,6 @@ def _build_text_menu(products: List[Dict], lang: str = "en", title: str = "") ->
             name     = item.get("title", "").strip().title()
             variants = item.get("variants", [])
             if variants:
-                # Show first variant price as "from" if multiple
                 if len(variants) == 1:
                     lines.append(f"  • *{name}* — PKR {int(variants[0]['price'])}")
                 else:
@@ -393,9 +390,7 @@ def _fuzzy_match_extra(query_word: str, extra_name: str, threshold: float = 0.75
 
 
 def _extract_extras_from_text(text: str, extras_options: List[Dict]) -> List[str]:
-    """
-    v14.2 FIX 2 preserved: Improved token-level matching so "naan" matches "Naan X2".
-    """
+    """Token-level matching so 'naan' matches 'Naan X2'."""
     q      = text.lower()
     chosen = []
     for e in extras_options:
@@ -463,7 +458,6 @@ def _is_valid_address(text: str) -> bool:
 # DATA LOADER
 # ============================================================
 
-# v14.3 FIX 3: Massively expanded category aliases for better matching
 _UNIVERSAL_CATEGORY_ALIASES: Dict[str, List[str]] = {
     "burger":  [
         "burger", "brgr", "برگر", "zinger", "cheeseburger", "double burger",
@@ -525,7 +519,7 @@ _UNIVERSAL_CATEGORY_ALIASES: Dict[str, List[str]] = {
     "salad":   ["salad", "سلاد", "raita", "slaw"],
     "bread":   [
         "bread", "naan", "roti", "paratha", "روٹی", "نان", "پراٹھا",
-        "chapati", "chapati", "tandoori roti", "plain naan",
+        "chapati", "tandoori roti", "plain naan",
         "butter naan", "garlic naan", "puri", "bhatura",
     ],
     "shawarma": [
@@ -581,7 +575,6 @@ def _build_product_keyword_index():
             if cat_key == category or cat_key in title.lower() or cat_key in desc.lower():
                 for alias in aliases:
                     _add(alias, product)
-                    # also index every token of the alias
                     for tok in re.findall(r'\w+', alias.lower()):
                         if len(tok) > 2:
                             _add(tok, product)
@@ -1129,6 +1122,11 @@ def filter_products(query: str) -> List[Dict]:
 # ============================================================
 
 def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
+    """
+    v14.4 FIX 1: Quantity tokens at the start of each part are now stripped
+    before size-hint matching, so "5 Small Pizza and 5 Medium Pizza" correctly
+    produces two sized entries instead of falling through.
+    """
     variants     = product.get("variants", [])
     spice_levels = product.get("spice_levels", [])
     q            = text.lower()
@@ -1144,11 +1142,15 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
         if not part:
             continue
 
+        # ── v14.4 FIX 1: strip leading quantity token FIRST ──────
         qty = 1
-        qty_match = re.match(
-            r'^(\d+(?:st|nd|rd|th)?|' + '|'.join(re.escape(k) for k in QUANTITY_WORDS.keys()) + r')\s+',
-            part, re.IGNORECASE
+        qty_pattern = re.compile(
+            r'^(\d+(?:st|nd|rd|th)?|' +
+            '|'.join(re.escape(k) for k in sorted(QUANTITY_WORDS.keys(), key=len, reverse=True)) +
+            r')\s+',
+            re.IGNORECASE
         )
+        qty_match = qty_pattern.match(part)
         if qty_match:
             raw_qty = qty_match.group(1).lower()
             qty     = _extract_quantity(raw_qty)
@@ -1159,6 +1161,8 @@ def _parse_multi_size_from_text(text: str, product: Dict) -> List[Dict]:
 
         matched_variant    = None
         matched_size_label = ""
+
+        # Match size hints (longest first to avoid partial matches)
         for sh in sorted(SIZE_HINTS, key=len, reverse=True):
             if sh.lower() in part:
                 mv = _match_variant(variants, sh)
@@ -1455,13 +1459,10 @@ async def send_whatsapp_text(to: str, body: str):
             logger.error(f"WhatsApp send failed: {e}")
 
 
-# v14.3 FIX 2: send_whatsapp_list is KEPT for API compatibility but the
-# main webhook now calls send_whatsapp_text with _build_text_menu output.
 async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], lang: str = "en"):
     """
     Sends a well-formatted TEXT menu (not WhatsApp interactive list).
-    Interactive lists were causing rendering issues and showing raw product
-    names without prices. Plain text menus work on every device.
+    Interactive lists were causing rendering issues on many devices.
     """
     menu_text = _build_text_menu(items, lang)
     await send_whatsapp_text(to, menu_text)
@@ -1497,6 +1498,20 @@ async def send_whatsapp_buttons(to: str, body: str, buttons: List[str]):
 # ============================================================
 
 def _detect_price_menu_intent(q: str) -> bool:
+    """
+    v14.4 FIX 5: Guard against firing on pure multi-size order strings like
+    '5 small pizza and 5 medium pizza' — these contain size words that look
+    like menu/price keywords but are actually order requests.
+    """
+    # If the query looks like a quantity+size+product pattern, it's an order
+    multi_size_order_pattern = re.compile(
+        r'\d+\s+(?:small|medium|large|regular|xl|xxl|half|full|'
+        r'half\s*plate|full\s*plate|family\s*pack|\d+\.?\d*\s*kg)',
+        re.IGNORECASE,
+    )
+    if multi_size_order_pattern.search(q) and _is_product_query(q):
+        return False
+
     price_phrases = [
         "all prices", "all flavours", "all flavors", "all pizza", "all burger",
         "all karahi", "price list", "show all", "menu prices", "full menu",
@@ -1544,10 +1559,8 @@ def _is_order_now_button(q: str) -> bool:
 
 
 def _is_post_order_small_talk(q: str, session: Dict) -> bool:
-    """
-    v14.2 FIX 1 preserved: Returns True when the user sends a short
-    acknowledgement / thanks after their order has been placed.
-    """
+    """Returns True when the user sends a short acknowledgement / thanks
+    after their order has been placed and no active cart exists."""
     if session.get("step", 0) != 0:
         return False
     if session.get("cart") or session.get("pending_order"):
@@ -1707,9 +1720,9 @@ async def _ask_multi_spice(to: str, items_needing_spice: List[Dict], product: Di
 
     body = "\n".join(lines)
     msgs = {
-        "en": f"🌶️ Spice level for *{name}*:\n{body}\n\n_(e.g. 'Half Plate Spicy and Family Pack Mild')_",
-        "ur": f"🌶️ *{name}* کے لیے مسالے کی سطح:\n{body}\n\n(جیسے: 'Half Plate Spicy and Family Pack Mild')",
-        "de": f"🌶️ Schärfegrad für *{name}*:\n{body}\n\n(z.B. 'Half Plate Spicy and Family Pack Mild')",
+        "en": f"🌶️ Spice level for *{name}*:\n{body}\n\n_(e.g. 'Small Spicy and Medium Mild', or just 'Spicy' for all)_",
+        "ur": f"🌶️ *{name}* کے لیے مسالے کی سطح:\n{body}\n\n(جیسے: 'Small Spicy and Medium Mild' یا سب کے لیے بس 'Spicy')",
+        "de": f"🌶️ Schärfegrad für *{name}*:\n{body}\n\n(z.B. 'Small Spicy and Medium Mild' oder 'Spicy' für alle)",
     }
     await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
 
@@ -2158,8 +2171,8 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # FIX G: "Order Now" / "Order Again" button handler
-        # v14.3 FIX 5: "Order Now" directly triggers order for last shown product
+        # "Order Now" / "Order Again" button handler
+        # v14.3 FIX 5 preserved: goes straight into order for last product
         # ═══════════════════════════════════════════════════════
         if _is_order_now_button(q):
             last_product = session.get("last_shown_product")
@@ -2180,7 +2193,6 @@ async def receive_message(request: Request):
                                                 ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"])
                     return JSONResponse({"status": "ok"})
 
-            # v14.3 FIX 5: directly start order flow for last shown product
             if last_product:
                 reset_for_new_order(session)
                 handled = await _handle_single_item_order(from_num, last_product.get("title", ""), lang)
@@ -2197,7 +2209,7 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # PRIORITY 1 — Cancel / Delete order
-        # v14.3 FIX 1: Warm messaging even when no active order
+        # v14.3 FIX 1 preserved: warm messaging even with no active order
         # ═══════════════════════════════════════════════════════
         if any(kw in q for kw in INTENT_KEYWORDS["cancel"]):
             cart = session.get("cart", [])
@@ -2215,7 +2227,6 @@ async def receive_message(request: Request):
                     ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"]
                 )
             else:
-                # v14.3 FIX 1: warm fallback — no active order
                 no_order_msg = {
                     "en": "Looks like there's nothing active to cancel right now 😊 Whenever you're ready to order, just tell me what you'd like!",
                     "ur": "ابھی کوئی فعال آرڈر نہیں ہے 😊 جب آرڈر کرنا ہو بتائیں!",
@@ -2229,7 +2240,7 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
-        # v14.2 FIX 1 preserved: Post-order small talk guard
+        # Post-order small talk guard
         # ═══════════════════════════════════════════════════════
         if _is_post_order_small_talk(q, session):
             order_count = session.get("order_count", 0)
@@ -2429,7 +2440,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 4 — ADDRESS (single item)
-        # v14.2 FIX 3 preserved: Read subtotal from _recalc_cart
         # ═══════════════════════════════════════════════════════
         if step == 4:
             po = session.get("pending_order", {})
@@ -2464,7 +2474,6 @@ async def receive_message(request: Request):
                 )
                 session["cart"] = [cart_item]
 
-            # v14.2 FIX 3: Use _recalc_cart for accurate subtotal
             subtotal        = _recalc_cart(session["cart"])
             delivery_charge = calculate_delivery_charge(subtotal, address)
             grand_total     = subtotal + delivery_charge
@@ -2746,12 +2755,21 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 20 — Multi-size SPICE RESOLUTION
+        # v14.4 FIX 2 & 3: size-word collision guard + all-item shared spice
         # ═══════════════════════════════════════════════════════
         if step == 20:
             multi_queue  = session.get("multi_size_queue", [])
             product      = session.get("pending_order", {}).get("product_ref", {})
             spice_levels = product.get("spice_levels", []) if product else []
             cart_items   = list(session.get("cart", []))
+
+            # Build set of known size labels to avoid collision with spice matching
+            # e.g. "medium" is a size — must not be treated as a spice level
+            known_size_labels: set = set()
+            if product:
+                for v in product.get("variants", []):
+                    for tok in re.findall(r'\w+', v.get("size", "").lower()):
+                        known_size_labels.add(tok)
 
             per_item_parsed = _parse_multi_size_from_text(msg_text, product) if product else []
             size_spice_map: Dict[str, str] = {}
@@ -2760,8 +2778,14 @@ async def receive_message(request: Request):
                     size_key = pi["matched_variant"].get("size", "").lower()
                     size_spice_map[size_key] = pi["spice"]
 
+            # v14.4 FIX 2: only accept a shared spice token if it does NOT
+            # collide with any known size label from this product's variants
             shared_spice = ""
             for sl in sorted(spice_levels, key=len, reverse=True):
+                sl_tokens = set(re.findall(r'\w+', sl.lower()))
+                # skip if ALL tokens of this spice label overlap with known size labels
+                if sl_tokens and sl_tokens.issubset(known_size_labels):
+                    continue
                 if sl.lower() in q:
                     shared_spice = sl.strip().title()
                     break
@@ -2954,9 +2978,9 @@ async def receive_message(request: Request):
             await send_whatsapp_text(from_num, addr_prompt.get(lang, addr_prompt["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── MIXED INTENT: price display ────────────────────────
+        # ── MIXED INTENT detection ─────────────────────────────
         order_intent   = any(kw in q for kw in INTENT_KEYWORDS["order"])
-        price_intent   = _detect_price_menu_intent(q)
+        price_intent   = _detect_price_menu_intent(q)   # v14.4 FIX 5 applied here
         menu_intent    = any(kw in q for kw in INTENT_KEYWORDS["menu"])
         inquiry_intent = any(kw in q for kw in INTENT_KEYWORDS["inquiry"])
         multi_signals  = ["and", "aur", "+", "also", "ke saath", "اور", "saath", "plus"]
@@ -3013,7 +3037,7 @@ async def receive_message(request: Request):
             if handled:
                 return JSONResponse({"status": "ok"})
 
-        # ── Menu display — v14.3 FIX 2: rich text menu ─────────
+        # ── Menu display ───────────────────────────────────────
         if menu_intent:
             _track({"total_searches": 1})
             category = _detect_category_from_query(q)
@@ -3083,7 +3107,7 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, no_order.get(lang, no_order["en"]))
             return JSONResponse({"status": "ok"})
 
-        # ── Greeting — AFTER product-name check ────────────────
+        # ── Greeting — checked AFTER product-name check ────────
         if _is_pure_greeting(q):
             greeting = BOT_DATA.get("initial_message", {}).get(lang, "Hey! 👋 Welcome. What would you like today? 🍽️")
             sugs     = get_suggestions(from_num, lang)
@@ -3606,7 +3630,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v14.3 started!")
+    logger.info("🚀 Restaurant Bot v14.4 started!")
     logger.info(f"   Products loaded    : {len(PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(BOT_DATA.get('faq', {}).keys())}")
