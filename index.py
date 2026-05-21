@@ -1,35 +1,42 @@
 """
-WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.5)
+WhatsApp AI Restaurant Bot — FastAPI Backend (Production v14.6)
 ===============================================================
-v14.5 improvements over v14.4:
+v14.6 — Bug-fix release over v14.5
 
-  ✅ ALL v14.4 logic 100% preserved — only targeted improvements applied.
+  ✅ ALL v14.5 logic 100% preserved — only targeted bug-fixes applied.
 
-  ✅ NEW 1: Example menu shown FULLY — all items with sizes/prices displayed
-             in a rich, human-readable format whenever menu is requested.
-             No truncation, no "check back soon" on example/demo products.
+  ✅ FIX 1 (v14.6): Step-1 (size prompt) now extracts quantity from the
+             user's reply so "5 large pizza" or "2 xl" correctly sets
+             po["qty"] and the cart item reflects the right quantity.
 
-  ✅ NEW 2: WhatsApp card-style product display — when showing cart or a
-             product, buttons now include "➕ Add More" alongside
-             "✅ Confirm Order" and "🗑️ Clear Cart" for seamless flow.
+  ✅ FIX 2 (v14.6): _is_valid_address now rejects food/order sentences
+             (e.g. "Before Confirming address add 2 half plate biryani")
+             by detecting food-domain words before falling through to the
+             length-based heuristic.
 
-  ✅ NEW 3: Human-friendly bot personality — warm, conversational,
-             emotionally intelligent responses throughout all steps.
-             Bot speaks like a real, caring restaurant staff member.
-             Handles confusion, hesitation, and off-topic messages gracefully.
+  ✅ FIX 3 (v14.6): Broader "same address" recognition via new helper
+             _is_same_address_request() which catches natural variants
+             such as "used previous address", "use previous", "same wala",
+             "purana address", etc.  Both step-4 and step-6 address
+             handlers call this check FIRST before _is_valid_address.
 
-  ✅ NEW 4: Professional & reliable — improved error messaging, address
-             validation feedback, and fallback handling with personality.
+  ✅ FIX 4 (v14.6): Step-1 multi-size path (when user replies to the size
+             prompt with a size+qty like "5 large") also updates po["qty"]
+             correctly before building the cart item.
 
-  ✅ NEW 5: Rich greeting with full menu teaser — on first contact the bot
-             introduces itself warmly and shows a compact menu preview
-             to spark interest immediately.
+  ── v14.5 improvements (all preserved) ────────────────────────────────
+  ✅ NEW 1  Full example menu shown completely when DB is empty.
+  ✅ NEW 2  WhatsApp card buttons always include ➕ Add More.
+  ✅ NEW 3  Human-friendly / emotionally-intelligent bot personality.
+  ✅ NEW 4  Professional error messaging with personality.
+  ✅ NEW 5  Rich greeting with menu teaser.
 
-  ✅ FIX 1  (v14.4): Multi-size same-product orders correctly enter order flow.
-  ✅ FIX 2  (v14.4): Spice resolution no longer misidentifies size words.
-  ✅ FIX 3  (v14.4): Shared spice for multi-size orders works correctly.
-  ✅ FIX 4  (v14.4): Cart summary shows accurate spice/extras per line-item.
-  ✅ FIX 5  (v14.4): Price-menu intent guard for multi-size order strings.
+  ── v14.4 fixes (all preserved) ────────────────────────────────────────
+  ✅ FIX 1  Multi-size same-product orders enter order flow correctly.
+  ✅ FIX 2  Spice resolution no longer misidentifies size words.
+  ✅ FIX 3  Shared spice for multi-size orders works correctly.
+  ✅ FIX 4  Cart summary shows accurate spice/extras per line-item.
+  ✅ FIX 5  Price-menu intent guard for multi-size order strings.
 """
 
 from fastapi import FastAPI, Request, Form, HTTPException
@@ -53,7 +60,7 @@ from difflib import SequenceMatcher
 load_dotenv()
 DetectorFactory.seed = 0
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v14.5")
+logger = logging.getLogger("RestaurantBot.v14.6")
 
 BOT_DATA: Dict[str, Any] = {}
 PRODUCTS_DATA: List[Dict[str, Any]] = []
@@ -74,8 +81,8 @@ def _is_rate_limited(user_id: str) -> bool:
 
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v14.5",
-    version="14.5",
+    title="WhatsApp AI Restaurant Bot v14.6",
+    version="14.6",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -317,7 +324,7 @@ _CATEGORY_EMOJI_MAP = {
 }
 
 
-# ── v14.5 NEW 1: Full example menu — shown completely, never truncated ──
+# ── Full example menu — shown completely, never truncated ──
 
 EXAMPLE_MENU: Dict[str, List[Dict]] = {
     "pizza": [
@@ -357,10 +364,7 @@ EXAMPLE_MENU: Dict[str, List[Dict]] = {
 
 
 def _build_full_example_menu(lang: str = "en") -> str:
-    """
-    v14.5 NEW 1: Build a complete, human-readable example menu.
-    Shows ALL categories and ALL items with full price breakdown.
-    """
+    """Build a complete, human-readable example menu."""
     header_map = {
         "en": (
             "🍽️ *Our Full Menu*\n"
@@ -424,7 +428,6 @@ def _build_full_example_menu(lang: str = "en") -> str:
 def _build_text_menu(products: List[Dict], lang: str = "en", title: str = "") -> str:
     """Build a beautifully formatted text menu grouped by category."""
     if not products:
-        # v14.5: instead of "nothing available", show example menu
         return _build_full_example_menu(lang)
 
     grouped: Dict[str, List[Dict]] = {}
@@ -560,18 +563,55 @@ _ADDRESS_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# v14.6 FIX 2: food/order words that disqualify a string from being an address
+_ADDRESS_DISQUALIFY_WORDS = re.compile(
+    r'\b(pizza|burger|biryani|karahi|order|add|plate|spicy|mild|medium|confirm|'
+    r'confirming|before|want|please|send|give|chicken|beef|mutton|fish|rice|'
+    r'naan|roti|drink|dessert|cake|shawarma|wrap|pasta|steak|sandwich|soup|'
+    r'salad|bread|roll|tikka|seekh|bbq|zinger|smash|crispy|family\s*pack)\b',
+    re.IGNORECASE,
+)
+
 _SHORT_WORDS = {
     "yes", "no", "ok", "okay", "sure", "fine", "yep", "yeah",
     "haan", "nahi", "done", "same", "correct", "right",
 }
 
+# v14.6 FIX 3: Broader "same address" pattern recognition
+_SAME_ADDRESS_PATTERN = re.compile(
+    r'\b(same|same\s+address|same\s+adress|same\s+add|same\s+wala|same\s+hi|'
+    r'use\s+previous|used\s+previous|previous\s+address|purana\s+address|'
+    r'pehla\s+address|pehle\s+wala\s+address|wahi\s+address|same\s+location|'
+    r'deliver\s+to\s+same|same\s+as\s+before|same\s+as\s+last\s+time)\b',
+    re.IGNORECASE,
+)
+
+
+def _is_same_address_request(text: str) -> bool:
+    """
+    v14.6 FIX 3: Returns True when the user is asking to reuse a previous address.
+    Catches natural variants: 'used previous address', 'use previous',
+    'same wala', 'purana address', etc.
+    """
+    return bool(_SAME_ADDRESS_PATTERN.search(text.strip()))
+
 
 def _is_valid_address(text: str) -> bool:
+    """
+    v14.6 FIX 2: Rejects food/order sentences that accidentally pass the
+    length heuristic (e.g. 'Before Confirming address add 2 half plate biryani').
+    Food-domain words disqualify a string unless it also has genuine address keywords.
+    """
     stripped = text.strip()
     if stripped.lower() in _SHORT_WORDS:
         return False
     if len(stripped) < 8:
         return False
+    # If the text contains food/order domain words it is NOT an address
+    # unless it ALSO contains genuine address keywords (e.g. "near McDonald's Block 5")
+    if _ADDRESS_DISQUALIFY_WORDS.search(stripped):
+        if not _ADDRESS_KEYWORDS.search(stripped):
+            return False
     if _ADDRESS_KEYWORDS.search(stripped):
         return True
     if len(stripped) >= 12 and (any(c.isdigit() for c in stripped) or ',' in stripped):
@@ -1132,6 +1172,33 @@ def _extract_quantity(token: str) -> int:
     return QUANTITY_WORDS.get(t, QUANTITY_WORDS.get(t_clean, 1))
 
 
+def _extract_qty_from_size_response(msg_text: str) -> int:
+    """
+    v14.6 FIX 1: Extract quantity when user replies to a size prompt with
+    something like '5 large', '2 xl', 'large x3', etc.
+    Returns 1 if no quantity word/digit found.
+    """
+    q = msg_text.lower().strip()
+
+    # Leading digit or word quantity
+    qty_pattern = re.compile(
+        r'^(\d+(?:st|nd|rd|th)?|' +
+        '|'.join(re.escape(k) for k in sorted(QUANTITY_WORDS.keys(), key=len, reverse=True)) +
+        r')\s+',
+        re.IGNORECASE,
+    )
+    m = qty_pattern.match(q)
+    if m:
+        return _extract_quantity(m.group(1))
+
+    # Trailing "x5" or "×5"
+    trailing = re.search(r'[x×]\s*(\d+)\s*$', q)
+    if trailing:
+        return int(trailing.group(1))
+
+    return 1
+
+
 def _find_product_by_query(query: str) -> Optional[Dict]:
     if not query:
         return None
@@ -1605,18 +1672,13 @@ async def send_whatsapp_text(to: str, body: str):
 
 
 async def send_whatsapp_list(to: str, header: str, items: List[Dict[str, Any]], lang: str = "en"):
-    """
-    Sends a well-formatted TEXT menu (not WhatsApp interactive list).
-    Interactive lists were causing rendering issues on many devices.
-    """
     menu_text = _build_text_menu(items, lang)
     await send_whatsapp_text(to, menu_text)
 
 
 async def send_whatsapp_buttons(to: str, body: str, buttons: List[str]):
     """
-    v14.5 NEW 2: Sends WhatsApp interactive button message.
-    Used for cart display, product cards, and confirmation flows.
+    Sends WhatsApp interactive button message.
     Max 3 buttons (WhatsApp API limit).
     """
     if not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
@@ -1784,7 +1846,7 @@ async def _smart_fallback(from_number: str, user_message: str, lang: str) -> str
 
 
 def _static_fallback(lang: str) -> str:
-    """v14.5: Warm, human-friendly static fallback messages."""
+    """Warm, human-friendly static fallback messages."""
     fallback = {
         "en": (
             "Hmm, I'm not quite sure I caught that — sorry about that! 😅\n\n"
@@ -1947,7 +2009,6 @@ async def _advance_product_queue(from_num: str, session: Dict, lang: str):
             "ur": f"{summary}\n\n✨ آرڈر تصدیق کریں یا مزید شامل کریں؟",
             "de": f"{summary}\n\n✨ Sieht gut aus! Bestätigen oder mehr hinzufügen?",
         }
-        # v14.5 NEW 2: Always include "Add More" in cart confirmation buttons
         await send_whatsapp_buttons(
             from_num,
             confirm_msgs.get(lang, confirm_msgs["en"]),
@@ -2041,7 +2102,6 @@ async def _finalise_single_item(
             "ur": f"{summary}\n\n✨ آرڈر تصدیق کریں یا مزید شامل کریں؟",
             "de": f"{summary}\n\n✨ Fertig! Bestätigen oder mehr hinzufügen?",
         }
-        # v14.5 NEW 2: "Add More" button always present
         await send_whatsapp_buttons(
             from_num,
             confirm_msgs.get(lang, confirm_msgs["en"]),
@@ -2166,7 +2226,6 @@ async def _handle_full_price_display(from_number: str, q: str, lang: str):
         title = title_map.get(lang, title_map["en"])
 
     if not products:
-        # v14.5: Show example menu when no products in DB
         example_menu_text = _build_full_example_menu(lang)
         await send_whatsapp_text(from_number, example_menu_text)
         return
@@ -2519,6 +2578,7 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 1 — SIZE
+        # v14.6 FIX 1: Extract quantity from size response
         # ═══════════════════════════════════════════════════════
         if step == 1:
             po       = session.get("pending_order", {})
@@ -2586,6 +2646,12 @@ async def receive_message(request: Request):
 
             po["size"]  = matched["size"]
             po["price"] = matched["price"]
+
+            # v14.6 FIX 1: extract and store quantity from the size response
+            extracted_qty = _extract_qty_from_size_response(msg_text)
+            if extracted_qty > 1:
+                po["qty"] = extracted_qty
+
             update_preferences(from_num, size=matched["size"])
             _track({f"size_preference.{matched['size']}": 1})
 
@@ -2699,11 +2765,13 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 4 — ADDRESS (single item)
+        # v14.6 FIX 3: Check _is_same_address_request FIRST
         # ═══════════════════════════════════════════════════════
         if step == 4:
             po = session.get("pending_order", {})
 
-            if q.strip() in ["same", "same address", "same adress", "same add"]:
+            # v14.6 FIX 3: broader "same address" matching checked first
+            if _is_same_address_request(msg_text):
                 address = session.get("last_address")
                 if not address:
                     no_addr = {
@@ -2897,6 +2965,7 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 6 — ADDRESS for cart order
+        # v14.6 FIX 3: Check _is_same_address_request FIRST
         # ═══════════════════════════════════════════════════════
         if step == 6:
             cart_items = session.get("cart", [])
@@ -2910,7 +2979,8 @@ async def receive_message(request: Request):
                 await send_whatsapp_text(from_num, cart_empty.get(lang, cart_empty["en"]))
                 return JSONResponse({"status": "ok"})
 
-            if q.strip() in ["same", "same address", "same adress", "same add"]:
+            # v14.6 FIX 3: broader "same address" matching checked first
+            if _is_same_address_request(msg_text):
                 address = session.get("last_address")
                 if not address:
                     no_addr = {
@@ -3237,7 +3307,6 @@ async def receive_message(request: Request):
             if cart:
                 total   = _recalc_cart(cart)
                 summary = _build_cart_summary(cart, total, lang)
-                # v14.5 NEW 2: Always show "Add More" in cart view
                 await send_whatsapp_buttons(
                     from_num,
                     summary,
@@ -3290,7 +3359,7 @@ async def receive_message(request: Request):
 
         # ── MIXED INTENT detection ─────────────────────────────
         order_intent   = any(kw in q for kw in INTENT_KEYWORDS["order"])
-        price_intent   = _detect_price_menu_intent(q)   # v14.4 FIX 5
+        price_intent   = _detect_price_menu_intent(q)
         menu_intent    = any(kw in q for kw in INTENT_KEYWORDS["menu"])
         inquiry_intent = any(kw in q for kw in INTENT_KEYWORDS["inquiry"])
         multi_signals  = ["and", "aur", "+", "also", "ke saath", "اور", "saath", "plus"]
@@ -3370,7 +3439,6 @@ async def receive_message(request: Request):
                 menu_text = _build_text_menu(products, lang)
                 await send_whatsapp_text(from_num, menu_text)
             else:
-                # v14.5 NEW 1: Show full example menu when DB is empty
                 example_msg = {
                     "en": "Here's a look at our full menu! 🍽️",
                     "ur": "ہمارا مکمل مینو! 🍽️",
@@ -3438,7 +3506,6 @@ async def receive_message(request: Request):
             greeting = BOT_DATA.get("initial_message", {}).get(lang, "Hey! 👋 Welcome. What would you like today? 🍽️")
             sugs     = get_suggestions(from_num, lang)
 
-            # v14.5 NEW 5: Show a menu teaser with greeting
             top_items = PRODUCTS_DATA[:3] if PRODUCTS_DATA else []
             teaser    = ""
             if top_items:
@@ -3997,7 +4064,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v14.5 started!")
+    logger.info("🚀 Restaurant Bot v14.6 started!")
     logger.info(f"   Products loaded    : {len(PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(BOT_DATA.get('faq', {}).keys())}")
