@@ -297,7 +297,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 1 — SIZE
-        # v14.6 FIX 1: Extract quantity from size response
         # ═══════════════════════════════════════════════════════
         if step == 1:
             po       = session.get("pending_order", {})
@@ -366,7 +365,7 @@ async def receive_message(request: Request):
             po["size"]  = matched["size"]
             po["price"] = matched["price"]
 
-            # v14.6 FIX 1: extract and store quantity from the size response
+            # Extract and store quantity from the size response
             extracted_qty = _extract_qty_from_size_response(msg_text)
             if extracted_qty > 1:
                 po["qty"] = extracted_qty
@@ -444,6 +443,11 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 3 — EXTRAS
+        # FIX: Apply extras only to items that match the size the
+        # user explicitly named (e.g. "1 XL pizza add Double toppings
+        # and other's for not be" → only XL gets Double Toppings).
+        # If no size is specified in the extras reply, apply to all
+        # items of that product (original behaviour, no regression).
         # ═══════════════════════════════════════════════════════
         if step == 3:
             po             = session.get("pending_order", {})
@@ -469,22 +473,84 @@ async def receive_message(request: Request):
                 for e_name in chosen:
                     _track({f"extras_preference.{e_name}": 1})
 
-            extras_price    = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen)
-            po["extras"]    = chosen
-            po["price"]     = po.get("price", 0) + extras_price
+            extras_price = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen)
 
-            cart_item = build_cart_item(
-                po.get("product_ref", {}),
-                po.get("size", ""), po.get("spice", ""),
-                chosen, po.get("qty", 1)
+            # ── v14.7 FIX A: detect which size the extras should apply to ──
+            # Parse the size mentioned in this extras-reply message.
+            # e.g. "1 XL pizza add Double toppings" → targeted_size = "xl"
+            # If none found, targeted_size stays "" and we apply to all
+            # items of this product (original behaviour, no regression).
+            product_ref     = po.get("product_ref", {})
+            targeted_size   = ""
+            if product_ref:
+                for v in product_ref.get("variants", []):
+                    v_size = v.get("size", "").lower()
+                    if v_size and v_size in q:
+                        targeted_size = v_size
+                        break
+
+            # Determine the qty hint from the extras message so we can
+            # disambiguate when multiple same-size items are in cart.
+            targeted_qty = _extract_qty_from_size_response(msg_text)
+
+            po["extras"] = chosen
+            po["price"]  = po.get("price", 0) + extras_price
+
+            # If this is a simple single-item flow (no multi-item cart yet),
+            # use the standard finalise path.
+            if not session.get("cart"):
+                cart_item = build_cart_item(
+                    po.get("product_ref", {}),
+                    po.get("size", ""), po.get("spice", ""),
+                    chosen, po.get("qty", 1)
+                )
+                await _finalise_single_item(from_num, session, cart_item, lang)
+                return JSONResponse({"status": "ok"})
+
+            # Multi-item cart path: apply extras selectively.
+            current_product_id = str(product_ref.get("_id", "")) if product_ref else ""
+            cart_items         = session.get("cart", [])
+
+            if chosen:
+                # Walk the cart and apply extras only to matching items.
+                # "Matching" means: same product AND (same size if targeted).
+                applied = 0
+                for item in cart_items:
+                    is_same_product = (item.get("product_id") == current_product_id)
+                    if not is_same_product:
+                        continue
+                    if targeted_size and item.get("size", "").lower() != targeted_size:
+                        continue
+                    # Apply extras price to each matched item.
+                    item["extras"]           = chosen
+                    item["extras_price"]     = extras_price
+                    item["total_item_price"] = (item["base_price"] + extras_price) * item["quantity"]
+                    applied += 1
+                    # If the user specified a count (e.g. "1 XL"),
+                    # stop after applying to that many items.
+                    if targeted_qty > 0 and applied >= targeted_qty:
+                        break
+
+            session["cart"] = cart_items
+
+            # Move to cart confirmation
+            session["step"] = 5
+            total   = _recalc_cart(cart_items)
+            summary = _build_cart_summary(cart_items, total, lang)
+            confirm_msgs = {
+                "en": f"{summary}\n\n✨ Looking great! Want to confirm? 😊",
+                "ur": f"{summary}\n\n✨ تصدیق کریں یا مزید شامل کریں؟",
+                "de": f"{summary}\n\n✨ Bestätigen oder mehr hinzufügen?",
+            }
+            await send_whatsapp_buttons(
+                from_num,
+                confirm_msgs.get(lang, confirm_msgs["en"]),
+                ["✅ Confirm Order", "➕ Add More", "🗑️ Clear Cart"],
             )
-
-            await _finalise_single_item(from_num, session, cart_item, lang)
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
         # STEP 4 — ADDRESS (single item)
-        # v14.6 FIX 3: Check _is_same_address_request FIRST
         # ═══════════════════════════════════════════════════════
         if step == 4:
             po = session.get("pending_order", {})
@@ -683,7 +749,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 6 — ADDRESS for cart order
-        # v14.6 FIX 3: Check _is_same_address_request FIRST
         # ═══════════════════════════════════════════════════════
         if step == 6:
             cart_items = session.get("cart", [])
@@ -840,7 +905,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 20 — Multi-size SPICE RESOLUTION
-        # v14.4 FIX 2 & 3
         # ═══════════════════════════════════════════════════════
         if step == 20:
             multi_queue  = session.get("multi_size_queue", [])
@@ -920,6 +984,8 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 30 — Multi-size EXTRAS
+        # FIX: Apply extras selectively by size + qty hint,
+        # same logic as STEP 3 multi-item path.
         # ═══════════════════════════════════════════════════════
         if step == 30:
             product        = session.get("pending_order", {}).get("product_ref", {})
@@ -934,24 +1000,32 @@ async def receive_message(request: Request):
 
             extras_price = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen)
 
+            # ── v14.7 FIX B: selective extras by size + qty hint ──
             current_product_id = str(product.get("_id", "")) if product else ""
-            targeted_size = ""
+            targeted_size      = ""
             if product:
                 for v in product.get("variants", []):
-                    if v.get("size", "").lower() in q:
-                        targeted_size = v["size"].lower()
+                    v_size = v.get("size", "").lower()
+                    if v_size and v_size in q:
+                        targeted_size = v_size
                         break
 
-            for item in cart_items:
-                is_same_product = (item.get("product_id") == current_product_id)
-                if not is_same_product:
-                    continue
-                if targeted_size and item.get("size", "").lower() != targeted_size:
-                    continue
-                if chosen:
+            targeted_qty = _extract_qty_from_size_response(msg_text)
+
+            if chosen:
+                applied = 0
+                for item in cart_items:
+                    is_same_product = (item.get("product_id") == current_product_id)
+                    if not is_same_product:
+                        continue
+                    if targeted_size and item.get("size", "").lower() != targeted_size:
+                        continue
                     item["extras"]           = chosen
                     item["extras_price"]     = extras_price
                     item["total_item_price"] = (item["base_price"] + extras_price) * item["quantity"]
+                    applied += 1
+                    if targeted_qty > 0 and applied >= targeted_qty:
+                        break
 
             session["cart"] = cart_items
 
@@ -1132,18 +1206,24 @@ async def receive_message(request: Request):
                     return JSONResponse({"status": "ok"})
             handled = await _handle_single_item_order(from_num, msg_text, lang)
 
-            # ── v14.7 FIX: pre-fill size/qty if already stated ──────
-            # When the user includes the size (and optionally qty) in
-            # their order message — e.g. "Add 5 family pack Biryani" —
-            # _handle_single_item_order parks at step 1 awaiting size.
-            # If we can already match a variant from the original text,
-            # skip the size prompt and advance the flow immediately.
+            # ── v14.7 FIX: pre-fill size/qty if already stated ──────────
+            # When the user includes the size (and optionally qty) in their
+            # order message — e.g. "Add 5 XL Pizza" — _handle_single_item_order
+            # parks at step 1 awaiting size confirmation. If we can already
+            # match a variant from the original message, advance the flow
+            # immediately WITHOUT sending a second size-prompt message.
+            # The guard `session.get("step") == 1` ensures we only attempt
+            # this fast-path when the handler genuinely stopped at step 1;
+            # if the handler already progressed past step 1 (e.g. it sent
+            # a spice question itself) we do nothing here and avoid a
+            # duplicate prompt.
             if handled and session.get("step") == 1:
                 po       = session.get("pending_order", {})
                 variants = po.get("variants", [])
                 if variants:
                     pre_matched = _match_variant(variants, msg_text)
                     if pre_matched:
+                        # Commit size + qty into pending_order
                         po["size"]  = pre_matched["size"]
                         po["price"] = pre_matched["price"]
                         pre_qty = _extract_qty_from_size_response(msg_text)
@@ -1154,6 +1234,7 @@ async def receive_message(request: Request):
 
                         spice_levels = po.get("spice_levels", [])
                         if spice_levels:
+                            # Advance to spice step — send ONE spice prompt
                             session["step"] = 2
                             product_ref = po.get("product_ref", {
                                 "title": po.get("dish", ""),
@@ -1186,7 +1267,7 @@ async def receive_message(request: Request):
                                         "de": "📍 Fast geschafft! Lieferadresse angeben:",
                                     }
                                     await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
-            # ── end v14.7 FIX ────────────────────────────────────────
+            # ── end v14.7 FIX ────────────────────────────────────────────
 
             if handled:
                 return JSONResponse({"status": "ok"})
