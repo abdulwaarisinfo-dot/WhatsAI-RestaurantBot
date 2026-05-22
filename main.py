@@ -1,6 +1,6 @@
 """
 main.py — FastAPI application, webhook handler, CRM/admin panel, and all REST APIs
-WhatsApp AI Restaurant Bot v14.6
+WhatsApp AI Restaurant Bot v14.7
 """
 
 import re
@@ -49,15 +49,15 @@ from bot_flow import (
     handle_multi_item_order,
 )
 
-logger = logging.getLogger("RestaurantBot.v14.6")
+logger = logging.getLogger("RestaurantBot.v14.7")
 
 # ============================================================
 # APP SETUP
 # ============================================================
 
 app = FastAPI(
-    title="WhatsApp AI Restaurant Bot v14.6",
-    version="14.6",
+    title="WhatsApp AI Restaurant Bot v14.7",
+    version="14.7",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -1131,6 +1131,63 @@ async def receive_message(request: Request):
                 if handled:
                     return JSONResponse({"status": "ok"})
             handled = await _handle_single_item_order(from_num, msg_text, lang)
+
+            # ── v14.7 FIX: pre-fill size/qty if already stated ──────
+            # When the user includes the size (and optionally qty) in
+            # their order message — e.g. "Add 5 family pack Biryani" —
+            # _handle_single_item_order parks at step 1 awaiting size.
+            # If we can already match a variant from the original text,
+            # skip the size prompt and advance the flow immediately.
+            if handled and session.get("step") == 1:
+                po       = session.get("pending_order", {})
+                variants = po.get("variants", [])
+                if variants:
+                    pre_matched = _match_variant(variants, msg_text)
+                    if pre_matched:
+                        po["size"]  = pre_matched["size"]
+                        po["price"] = pre_matched["price"]
+                        pre_qty = _extract_qty_from_size_response(msg_text)
+                        if pre_qty > 1:
+                            po["qty"] = pre_qty
+                        update_preferences(from_num, size=pre_matched["size"])
+                        _track({f"size_preference.{pre_matched['size']}": 1})
+
+                        spice_levels = po.get("spice_levels", [])
+                        if spice_levels:
+                            session["step"] = 2
+                            product_ref = po.get("product_ref", {
+                                "title": po.get("dish", ""),
+                                "spice_levels": spice_levels,
+                            })
+                            await _ask_spice(from_num, product_ref, lang)
+                        else:
+                            po["spice"] = ""
+                            product_ref = po.get("product_ref", {
+                                "title": po.get("dish", ""),
+                                "extras": po.get("extras_options", []),
+                            })
+                            has_extras      = await _ask_extras(from_num, product_ref, lang)
+                            session["step"] = 3 if has_extras else 4
+                            if not has_extras:
+                                if session.get("cart"):
+                                    cart_item = build_cart_item(
+                                        po.get("product_ref", {}),
+                                        po.get("size", ""), po.get("spice", ""),
+                                        po.get("extras", []), po.get("qty", 1),
+                                    )
+                                    await _finalise_single_item(from_num, session, cart_item, lang)
+                                else:
+                                    ask_addr = {
+                                        "en": (
+                                            "📍 Almost there! Just need your delivery address.\n\n"
+                                            "_(House no., street, area, city — the more detail the better!)_"
+                                        ),
+                                        "ur": "📍 بہترین! اپنا مکمل پتہ دیں:",
+                                        "de": "📍 Fast geschafft! Lieferadresse angeben:",
+                                    }
+                                    await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
+            # ── end v14.7 FIX ────────────────────────────────────────
+
             if handled:
                 return JSONResponse({"status": "ok"})
 
@@ -1790,7 +1847,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v14.6 started!")
+    logger.info("🚀 Restaurant Bot v14.7 started!")
     logger.info(f"   Products loaded    : {len(config.PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(config.PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(config.BOT_DATA.get('faq', {}).keys())}")
