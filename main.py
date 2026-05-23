@@ -1936,4 +1936,4 @@ async def startup_event():
     logger.info(f"   Delivery charges   : {config.BOT_DATA.get('delivery_charges', {})}")
     logger.info(f"   WhatsApp connected : {'✅' if config.WHATSAPP_TOKEN else '❌'}")
     logger.info(f"   MongoDB connected  : {'✅' if products_col is not None else '❌'}")
-    logger.info(f"   AI fallback        : 
+    logger.info(f"   AI fallback        : {'✅' if config.ANTHROPIC_API_KEY else '⚠️  Static fallback active'}")
