@@ -1,6 +1,5 @@
 """
 config.py — Environment variables, constants, and global state containers
-WhatsApp AI Restaurant Bot v14.7 + Table Reservations
 """
 
 import os
@@ -14,7 +13,7 @@ load_dotenv()
 DetectorFactory.seed = 0
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RestaurantBot.v14.7")
+logger = logging.getLogger("RestaurantBot.v14.6")
 
 # ============================================================
 # ENVIRONMENT VARIABLES
@@ -41,35 +40,6 @@ PRODUCTS_DATA: List[Dict[str, Any]] = []
 PRODUCT_KEYWORD_INDEX: Dict[str, List[Dict]] = {}
 USER_SESSIONS: Dict[str, Dict[str, Any]] = {}
 _rate_store: Dict[str, list] = defaultdict(list)
-
-# ============================================================
-# TABLE RESERVATION CONSTANTS
-# ============================================================
-
-# Valid time slots for reservations (24h format strings)
-RESERVATION_TIME_SLOTS = [
-    "12:00", "12:30", "13:00", "13:30", "14:00", "14:30",
-    "15:00", "15:30", "16:00", "16:30", "17:00", "17:30",
-    "18:00", "18:30", "19:00", "19:30", "20:00", "20:30",
-    "21:00", "21:30", "22:00",
-]
-
-# Maximum guests per reservation
-RESERVATION_MAX_GUESTS = 20
-
-# Minimum advance booking in hours
-RESERVATION_MIN_ADVANCE_HOURS = 1
-
-# Reservation statuses
-RESERVATION_STATUSES = ["Pending", "Confirmed", "Cancelled", "Completed", "No Show"]
-
-# Reservation flow steps (negative to avoid clash with order steps)
-STEP_RESERVATION_NAME     = -1
-STEP_RESERVATION_DATE     = -2
-STEP_RESERVATION_TIME     = -3
-STEP_RESERVATION_GUESTS   = -4
-STEP_RESERVATION_NOTES    = -5
-STEP_RESERVATION_CONFIRM  = -6
 
 # ============================================================
 # KEYWORD DATABASES
@@ -180,22 +150,6 @@ INTENT_KEYWORDS = {
         "thank", "thanks", "thankyou", "thank you", "shukriya", "شکریہ",
         "jazakallah", "jazak allah", "great", "awesome", "perfect", "excellent",
         "wonderful", "brilliant", "amazing",
-    ],
-    # ── NEW: Table reservation intents ──────────────────────────
-    "reservation": [
-        "reserve", "reservation", "book a table", "table booking", "book table",
-        "table reserve", "seat", "dine in", "dine-in", "dining", "sit in",
-        "ریزرویشن", "میز بک", "میز محفوظ", "tisch reservieren", "tisch buchen",
-        "want a table", "need a table", "table for", "book for",
-        "i want to reserve", "i want to book", "reserve table",
-        "table reservation", "make a reservation", "get a table",
-        "book a seat", "reserve a seat", "inside seating", "outdoor seating",
-    ],
-    "my_reservations": [
-        "my reservation", "my booking", "my table", "show reservation",
-        "view reservation", "check reservation", "reservation status",
-        "meri reservation", "meri booking", "mera table",
-        "cancel reservation", "cancel booking", "reservation cancel",
     ],
 }
 
@@ -369,8 +323,4 @@ _BUTTON_TEXTS = {
     "✅ order now", "📋 view menu", "✅ order now",
     "order again 🔄", "view menu", "place order", "contact us",
     "confirm order", "add more", "clear cart", "order now",
-    # reservation buttons
-    "🪑 book a table", "📅 my reservations", "✅ confirm reservation",
-    "❌ cancel reservation", "book a table", "my reservations",
-    "confirm reservation", "cancel reservation",
 }
