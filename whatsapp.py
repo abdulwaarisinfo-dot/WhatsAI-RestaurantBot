@@ -276,4 +276,4 @@ async def _ask_multi_spice(to: str, items_needing_spice: List[Dict], product: Di
             f"(z.B. 'Small Spicy, Medium Mild' oder 'Spicy' für alle)"
         ),
     }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
+    await send_whatsapp_text(to, msgs.get(lang, msgs["en"])
