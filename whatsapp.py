@@ -1,11 +1,3 @@
-"""
-whatsapp.py — WhatsApp API helpers, smart fallback (Claude AI), bot flow helpers
-"""
-
-import re
-import logging
-from typing import Dict, List, Any, Optional
-
 import httpx
 
 import config
@@ -276,4 +268,4 @@ async def _ask_multi_spice(to: str, items_needing_spice: List[Dict], product: Di
             f"(z.B. 'Small Spicy, Medium Mild' oder 'Spicy' für alle)"
         ),
     }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"])
+    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
