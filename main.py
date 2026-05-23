@@ -1,6 +1,7 @@
 """
 main.py — FastAPI application, webhook handler, CRM/admin panel, and all REST APIs
-WhatsApp AI Restaurant Bot v14.7 + Table Reservations
+WhatsApp AI Restaurant Bot v14.7
+Includes: Full Table Reservation system (WhatsApp flow + CRUD API)
 """
 
 import re
@@ -9,7 +10,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,8 +24,11 @@ from database import (
     load_data_realtime, init_analytics, _track, _str_id, _parse_json_field,
     calculate_delivery_charge, _delivery_charge_info_text,
     create_order_from_cart, get_delivery_time,
-    get_all_reservations, get_reservation, update_reservation_status,
-    delete_reservation, get_reservation_stats,
+    # reservation helpers
+    create_reservation, get_reservation, get_reservations,
+    update_reservation, update_reservation_status, delete_reservation,
+    check_table_availability, get_reservation_stats,
+    RESERVATION_STATUSES,
 )
 from sessions import (
     get_user_session, reset_cart_only, reset_for_new_order,
@@ -32,7 +36,6 @@ from sessions import (
     _is_same_address_request, _is_valid_address, extract_address,
     get_faq_response, get_suggestions,
     _is_pure_greeting, _is_order_now_button, _is_post_order_small_talk,
-    _is_reservation_intent, _is_my_reservations_intent,
 )
 from products import (
     _recalc_cart, _build_cart_summary, build_cart_item,
@@ -45,13 +48,12 @@ from products import (
 from whatsapp import (
     send_whatsapp_text, send_whatsapp_buttons,
     _ask_size, _ask_spice, _ask_extras, _ask_multi_spice,
+    _smart_fallback,
 )
 from bot_flow import (
     _advance_product_queue, _finalise_single_item,
     _handle_single_item_order, _handle_full_price_display,
     handle_multi_item_order,
-    handle_reservation_start, handle_reservation_step,
-    handle_my_reservations,
 )
 
 logger = logging.getLogger("RestaurantBot.v14.7")
@@ -77,6 +79,387 @@ app.add_middleware(
 )
 
 templates = Jinja2Templates(directory="templates")
+
+
+# ============================================================
+# RESERVATION WHATSAPP FLOW HELPERS
+# ============================================================
+# Session steps used by the reservation sub-flow:
+#   step 50  → waiting for guest name
+#   step 51  → waiting for phone number
+#   step 52  → waiting for date  (YYYY-MM-DD)
+#   step 53  → waiting for time  (HH:MM)
+#   step 54  → waiting for guest count
+#   step 55  → waiting for special requests (or "skip")
+#   step 56  → reservation summary confirm / cancel
+
+_RESERVATION_INTENT_KEYWORDS = [
+    "reserve", "reservation", "book a table", "table booking", "book table",
+    "dine in", "dine-in", "sit in", "sit-in", "table for", "seating",
+    "rishta", "میز بک", "ٹیبل بک", "tisch", "reservierung", "tisch buchen",
+]
+
+
+def _is_reservation_intent(q: str) -> bool:
+    return any(kw in q for kw in _RESERVATION_INTENT_KEYWORDS)
+
+
+def _is_reservation_cancel(q: str) -> bool:
+    return any(kw in q for kw in ["cancel reservation", "cancel booking", "no reservation",
+                                   "rez cancel", "booking cancel"])
+
+
+def _build_reservation_summary(res: Dict, lang: str) -> str:
+    """Build a human-readable reservation summary string."""
+    name    = res.get("name", "")
+    phone   = res.get("phone", "")
+    date    = res.get("date", "")
+    time_   = res.get("time", "")
+    guests  = res.get("guests", "")
+    table   = res.get("table_number") or {
+        "en": "Auto-assigned", "ur": "خودکار", "de": "Automatisch"
+    }.get(lang, "Auto-assigned")
+    special = res.get("special_requests") or {
+        "en": "None", "ur": "کچھ نہیں", "de": "Keine"
+    }.get(lang, "None")
+
+    lines = {
+        "en": (
+            f"📋 *Reservation Summary*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Name     : {name}\n"
+            f"📞 Phone    : {phone}\n"
+            f"📅 Date     : {date}\n"
+            f"🕐 Time     : {time_}\n"
+            f"👥 Guests   : {guests}\n"
+            f"🪑 Table    : {table}\n"
+            f"📝 Requests : {special}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━"
+        ),
+        "ur": (
+            f"📋 *ریزرویشن کی تفصیل*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 نام      : {name}\n"
+            f"📞 فون     : {phone}\n"
+            f"📅 تاریخ   : {date}\n"
+            f"🕐 وقت     : {time_}\n"
+            f"👥 مہمان   : {guests}\n"
+            f"🪑 ٹیبل    : {table}\n"
+            f"📝 خاص     : {special}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━"
+        ),
+        "de": (
+            f"📋 *Reservierungsübersicht*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Name       : {name}\n"
+            f"📞 Telefon    : {phone}\n"
+            f"📅 Datum      : {date}\n"
+            f"🕐 Uhrzeit    : {time_}\n"
+            f"👥 Gäste      : {guests}\n"
+            f"🪑 Tisch      : {table}\n"
+            f"📝 Wünsche    : {special}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━"
+        ),
+    }
+    return lines.get(lang, lines["en"])
+
+
+async def _handle_reservation_flow(from_num: str, msg_text: str, session: Dict, lang: str) -> bool:
+    """
+    Drive the multi-step WhatsApp reservation flow.
+    Returns True when this function fully handled the message (caller should return early).
+    """
+    step = session.get("step", 0)
+    q    = msg_text.lower().strip()
+
+    # ── Cancellation guard ────────────────────────────────────
+    if _is_reservation_cancel(q) and step in range(50, 57):
+        session["step"]            = 0
+        session["pending_reservation"] = {}
+        cancel_msg = {
+            "en": "🗑️ No problem — reservation cancelled! Let me know if you'd like to try again. 😊",
+            "ur": "🗑️ ریزرویشن منسوخ! دوبارہ بک کرنا ہو تو بتائیں۔",
+            "de": "🗑️ Reservierung abgebrochen! Sagen Sie mir, wenn Sie es erneut versuchen möchten.",
+        }
+        await send_whatsapp_buttons(
+            from_num,
+            cancel_msg.get(lang, cancel_msg["en"]),
+            ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"],
+        )
+        return True
+
+    # ── STEP 50 — ask name ────────────────────────────────────
+    if step == 50:
+        pr = session.setdefault("pending_reservation", {})
+        name = msg_text.strip().title()
+        if len(name) < 2:
+            err = {
+                "en": "Please enter your *full name* so we can hold the table for you. 😊",
+                "ur": "براہ کرم اپنا *مکمل نام* لکھیں۔",
+                "de": "Bitte geben Sie Ihren *vollständigen Namen* ein.",
+            }
+            await send_whatsapp_text(from_num, err.get(lang, err["en"]))
+            return True
+        pr["name"]    = name
+        session["step"] = 51
+        ask_phone = {
+            "en": f"Thanks, *{name}*! 📞 What's the best phone number to reach you on?",
+            "ur": f"شکریہ *{name}*! 📞 آپ کا فون نمبر کیا ہے؟",
+            "de": f"Danke, *{name}*! 📞 Wie ist Ihre Telefonnummer?",
+        }
+        await send_whatsapp_text(from_num, ask_phone.get(lang, ask_phone["en"]))
+        return True
+
+    # ── STEP 51 — phone ───────────────────────────────────────
+    if step == 51:
+        pr    = session.get("pending_reservation", {})
+        phone = re.sub(r'[^\d+\-\s()]', '', msg_text).strip()
+        digits = re.sub(r'\D', '', phone)
+        if len(digits) < 7:
+            err = {
+                "en": "That doesn't look like a valid phone number. Please try again. 📞",
+                "ur": "فون نمبر درست نہیں لگتا۔ دوبارہ لکھیں۔",
+                "de": "Das sieht nicht wie eine gültige Telefonnummer aus. Bitte erneut eingeben.",
+            }
+            await send_whatsapp_text(from_num, err.get(lang, err["en"]))
+            return True
+        pr["phone"]     = phone
+        session["step"] = 52
+        ask_date = {
+            "en": (
+                "📅 Which date would you like? Please enter in *DD-MM-YYYY* format.\n"
+                "_(e.g. 25-08-2025)_"
+            ),
+            "ur": "📅 کون سی تاریخ چاہتے ہیں؟ *DD-MM-YYYY* فارمیٹ میں لکھیں۔\n_(مثال: 25-08-2025)_",
+            "de": "📅 Welches Datum? Bitte im Format *TT-MM-JJJJ* eingeben.\n_(z.B. 25-08-2025)_",
+        }
+        await send_whatsapp_text(from_num, ask_date.get(lang, ask_date["en"]))
+        return True
+
+    # ── STEP 52 — date ───────────────────────────────────────
+    if step == 52:
+        pr = session.get("pending_reservation", {})
+        # Accept DD-MM-YYYY or YYYY-MM-DD or DD/MM/YYYY
+        raw   = msg_text.strip()
+        parts = re.split(r'[-/.]', raw)
+        date_str = ""
+        if len(parts) == 3:
+            # normalise to YYYY-MM-DD for storage
+            if len(parts[0]) == 4:
+                date_str = f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+            else:
+                date_str = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        if not date_str or len(date_str) != 10:
+            err = {
+                "en": "⚠️ Please enter the date as *DD-MM-YYYY*, e.g. _25-08-2025_",
+                "ur": "⚠️ تاریخ *DD-MM-YYYY* فارمیٹ میں لکھیں، مثلاً _25-08-2025_",
+                "de": "⚠️ Bitte Datum als *TT-MM-JJJJ* eingeben, z.B. _25-08-2025_",
+            }
+            await send_whatsapp_text(from_num, err.get(lang, err["en"]))
+            return True
+        pr["date"]      = date_str
+        session["step"] = 53
+        ask_time = {
+            "en": "🕐 And what time? Please enter in *HH:MM* (24-hr) format.\n_(e.g. 19:30)_",
+            "ur": "🕐 کس وقت؟ *HH:MM* فارمیٹ میں لکھیں۔\n_(مثال: 19:30)_",
+            "de": "🕐 Und die Uhrzeit? Bitte im Format *HH:MM* eingeben.\n_(z.B. 19:30)_",
+        }
+        await send_whatsapp_text(from_num, ask_time.get(lang, ask_time["en"]))
+        return True
+
+    # ── STEP 53 — time ───────────────────────────────────────
+    if step == 53:
+        pr      = session.get("pending_reservation", {})
+        raw     = msg_text.strip().replace(".", ":").replace("-", ":")
+        t_match = re.search(r'(\d{1,2}):(\d{2})', raw)
+        if not t_match:
+            # try plain "7pm", "7 pm", "19"
+            ampm = re.search(r'(\d{1,2})\s*(am|pm)', raw, re.IGNORECASE)
+            if ampm:
+                hr = int(ampm.group(1))
+                if ampm.group(2).lower() == "pm" and hr != 12:
+                    hr += 12
+                time_str = f"{hr:02d}:00"
+            else:
+                err = {
+                    "en": "⚠️ Please enter the time as *HH:MM*, e.g. _19:30_ or _7:30pm_",
+                    "ur": "⚠️ وقت *HH:MM* فارمیٹ میں لکھیں، مثلاً _19:30_",
+                    "de": "⚠️ Bitte Uhrzeit als *HH:MM* eingeben, z.B. _19:30_",
+                }
+                await send_whatsapp_text(from_num, err.get(lang, err["en"]))
+                return True
+        else:
+            time_str = f"{int(t_match.group(1)):02d}:{t_match.group(2)}"
+        pr["time"]      = time_str
+        session["step"] = 54
+        ask_guests = {
+            "en": "👥 How many guests will be dining with us?",
+            "ur": "👥 کتنے مہمان ہوں گے؟",
+            "de": "👥 Für wie viele Personen möchten Sie reservieren?",
+        }
+        await send_whatsapp_text(from_num, ask_guests.get(lang, ask_guests["en"]))
+        return True
+
+    # ── STEP 54 — guest count ────────────────────────────────
+    if step == 54:
+        pr = session.get("pending_reservation", {})
+        nums = re.findall(r'\d+', msg_text)
+        if not nums:
+            err = {
+                "en": "Please enter the *number of guests*, e.g. _4_",
+                "ur": "مہمانوں کی تعداد لکھیں، مثلاً _4_",
+                "de": "Bitte *Anzahl der Gäste* eingeben, z.B. _4_",
+            }
+            await send_whatsapp_text(from_num, err.get(lang, err["en"]))
+            return True
+        guests          = int(nums[0])
+        pr["guests"]    = guests
+        session["step"] = 55
+
+        # Quick availability check
+        avail = check_table_availability(pr.get("date", ""), pr.get("time", ""), guests)
+        if not avail["available"]:
+            unavail = {
+                "en": (
+                    f"⚠️ We're fully booked at *{pr.get('time')}* on *{pr.get('date')}*.\n\n"
+                    f"Please try a different time or date:"
+                ),
+                "ur": f"⚠️ *{pr.get('time')}* بجے *{pr.get('date')}* کو جگہ نہیں۔\nدوسرا وقت یا تاریخ آزمائیں:",
+                "de": f"⚠️ Um *{pr.get('time')}* am *{pr.get('date')}* sind wir leider ausgebucht.\nBitte andere Zeit / anderes Datum wählen:",
+            }
+            session["step"] = 53   # send back to time step
+            await send_whatsapp_text(from_num, unavail.get(lang, unavail["en"]))
+            return True
+
+        ask_special = {
+            "en": (
+                "📝 Any special requests? _(dietary needs, birthday set-up, high chair, etc.)_\n\n"
+                "Or type *skip* to continue."
+            ),
+            "ur": "📝 کوئی خاص خواہش؟ _(جیسے ویجیٹیرین، سالگرہ سجاوٹ وغیرہ)_\n\n*skip* لکھیں اگر کچھ نہیں۔",
+            "de": "📝 Besondere Wünsche? _(Diät, Geburtstags-Setup, Kinderstuhl usw.)_\n\nOder *skip* eingeben.",
+        }
+        await send_whatsapp_text(from_num, ask_special.get(lang, ask_special["en"]))
+        return True
+
+    # ── STEP 55 — special requests → show summary ────────────
+    if step == 55:
+        pr = session.get("pending_reservation", {})
+        if q not in ("skip", "none", "no", "nahi", "nope", "nein"):
+            pr["special_requests"] = msg_text.strip()
+        else:
+            pr["special_requests"] = ""
+        session["step"] = 56
+        summary = _build_reservation_summary(pr, lang)
+        confirm_q = {
+            "en": f"{summary}\n\n✅ Shall I confirm this reservation?",
+            "ur": f"{summary}\n\n✅ کیا یہ ریزرویشن تصدیق کریں؟",
+            "de": f"{summary}\n\n✅ Soll ich diese Reservierung bestätigen?",
+        }
+        await send_whatsapp_buttons(
+            from_num,
+            confirm_q.get(lang, confirm_q["en"]),
+            ["✅ Confirm", "✏️ Edit", "❌ Cancel"],
+        )
+        return True
+
+    # ── STEP 56 — confirmation ───────────────────────────────
+    if step == 56:
+        pr = session.get("pending_reservation", {})
+
+        if any(kw in q for kw in ["confirm", "yes", "haan", "okay", "ok", "✅", "sure", "proceed"]):
+            res_id = create_reservation(
+                user_id          = from_num,
+                name             = pr.get("name", ""),
+                phone            = pr.get("phone", from_num),
+                date             = pr.get("date", ""),
+                time             = pr.get("time", ""),
+                guests           = pr.get("guests", 1),
+                special_requests = pr.get("special_requests", ""),
+                source           = "whatsapp",
+            )
+            session["step"]                = 0
+            session["pending_reservation"] = {}
+
+            if res_id == "db_error":
+                db_err = {
+                    "en": "⚠️ Something went wrong saving your reservation. Please try again or contact us directly.",
+                    "ur": "⚠️ ریزرویشن محفوظ نہیں ہوئی۔ دوبارہ کوشش کریں یا ہم سے رابطہ کریں۔",
+                    "de": "⚠️ Fehler beim Speichern. Bitte erneut versuchen oder uns direkt kontaktieren.",
+                }
+                await send_whatsapp_text(from_num, db_err.get(lang, db_err["en"]))
+                return True
+
+            conf = {
+                "en": (
+                    f"🎉 *Reservation Confirmed!*\n\n"
+                    f"{_build_reservation_summary(pr, lang)}\n\n"
+                    f"🔖 Booking ID: *#{res_id[-6:]}*\n\n"
+                    f"We look forward to welcoming you! 🍽️\n"
+                    f"Type *new order* anytime to also place a food order 😊"
+                ),
+                "ur": (
+                    f"🎉 *ریزرویشن تصدیق ہوگئی!*\n\n"
+                    f"{_build_reservation_summary(pr, lang)}\n\n"
+                    f"🔖 بکنگ نمبر: *#{res_id[-6:]}*\n\n"
+                    f"ہم آپ کا انتظار کریں گے! 🍽️"
+                ),
+                "de": (
+                    f"🎉 *Reservierung bestätigt!*\n\n"
+                    f"{_build_reservation_summary(pr, lang)}\n\n"
+                    f"🔖 Buchungs-ID: *#{res_id[-6:]}*\n\n"
+                    f"Wir freuen uns auf Sie! 🍽️"
+                ),
+            }
+            await send_whatsapp_buttons(
+                from_num,
+                conf.get(lang, conf["en"]),
+                ["View Menu 📋", "New Order 🛒", "Contact Us 📞"],
+            )
+            return True
+
+        if any(kw in q for kw in ["edit", "change", "modify", "update", "✏️"]):
+            # Restart the flow from name
+            session["step"] = 50
+            restart = {
+                "en": "Sure! Let's redo it. What's your *name*?",
+                "ur": "ٹھیک ہے! دوبارہ شروع کریں۔ آپ کا *نام*؟",
+                "de": "Klar! Nochmal von vorne. Wie ist Ihr *Name*?",
+            }
+            await send_whatsapp_text(from_num, restart.get(lang, restart["en"]))
+            return True
+
+        if any(kw in q for kw in ["cancel", "no", "nahi", "nein", "❌"]):
+            session["step"]                = 0
+            session["pending_reservation"] = {}
+            cancelled = {
+                "en": "🗑️ Reservation not saved. No worries — let me know whenever you'd like to book! 😊",
+                "ur": "🗑️ ریزرویشن محفوظ نہیں ہوئی۔ جب چاہیں بتائیں! 😊",
+                "de": "🗑️ Reservierung nicht gespeichert. Jederzeit wieder melden! 😊",
+            }
+            await send_whatsapp_buttons(
+                from_num,
+                cancelled.get(lang, cancelled["en"]),
+                ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"],
+            )
+            return True
+
+        # Unrecognised → re-prompt
+        summary = _build_reservation_summary(pr, lang)
+        re_prompt = {
+            "en": f"{summary}\n\nPlease tap *Confirm*, *Edit*, or *Cancel*.",
+            "ur": f"{summary}\n\n*تصدیق*، *ترمیم* یا *منسوخ* کریں۔",
+            "de": f"{summary}\n\nBitte *Bestätigen*, *Bearbeiten* oder *Abbrechen* wählen.",
+        }
+        await send_whatsapp_buttons(
+            from_num,
+            re_prompt.get(lang, re_prompt["en"]),
+            ["✅ Confirm", "✏️ Edit", "❌ Cancel"],
+        )
+        return True
+
+    return False  # step not in reservation range
+
 
 # ============================================================
 # WEBHOOK
@@ -149,14 +532,40 @@ async def receive_message(request: Request):
         _track({"total_searches": 1, f"supported_languages.{lang}": 1})
 
         # ═══════════════════════════════════════════════════════
-        # RESERVATION FLOW — active negative steps take priority
-        # This must come BEFORE all other routing so that
-        # mid-reservation inputs are never misrouted.
+        # RESERVATION SUB-FLOW (steps 50–56) — highest priority
+        # so reservation questions are never hijacked by food flow
         # ═══════════════════════════════════════════════════════
-        if step < 0:
-            consumed = await handle_reservation_step(from_num, session, msg_text, lang)
-            if consumed:
+        if step in range(50, 57):
+            handled = await _handle_reservation_flow(from_num, msg_text, session, lang)
+            if handled:
                 return JSONResponse({"status": "ok"})
+
+        # ═══════════════════════════════════════════════════════
+        # RESERVATION INTENT — kick off the flow from step 0
+        # ═══════════════════════════════════════════════════════
+        if step == 0 and _is_reservation_intent(q):
+            session["pending_reservation"] = {}
+            session["step"]                = 50
+            welcome_res = {
+                "en": (
+                    "🍽️ *Table Reservation*\n\n"
+                    "I'd love to reserve a table for you! Let's get the details.\n\n"
+                    "First — what's your *name*? 😊\n"
+                    "_(Type *cancel reservation* at any time to stop)_"
+                ),
+                "ur": (
+                    "🍽️ *ٹیبل ریزرویشن*\n\n"
+                    "آپ کے لیے ٹیبل بک کرتے ہیں! پہلے آپ کا *نام* بتائیں۔ 😊\n"
+                    "_(بند کرنے کے لیے *cancel reservation* لکھیں)_"
+                ),
+                "de": (
+                    "🍽️ *Tischreservierung*\n\n"
+                    "Ich reserviere gerne einen Tisch für Sie! Wie ist Ihr *Name*? 😊\n"
+                    "_(Jederzeit *cancel reservation* tippen zum Abbrechen)_"
+                ),
+            }
+            await send_whatsapp_text(from_num, welcome_res.get(lang, welcome_res["en"]))
+            return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
         # PRIORITY 0 — "new order" → reset cart immediately
@@ -226,28 +635,6 @@ async def receive_message(request: Request):
                 "de": "Natürlich! Was möchten Sie bestellen? 🍽️\n(Gerichtnamen eingeben oder 'Menü anzeigen')",
             }
             await send_whatsapp_text(from_num, ask_what.get(lang, ask_what["en"]))
-            return JSONResponse({"status": "ok"})
-
-        # ═══════════════════════════════════════════════════════
-        # RESERVATION intent — start fresh or show my reservations
-        # (only when NOT already in a reservation step)
-        # ═══════════════════════════════════════════════════════
-        if _is_reservation_intent(q) and step >= 0:
-            await handle_reservation_start(from_num, session, lang)
-            return JSONResponse({"status": "ok"})
-
-        if _is_my_reservations_intent(q):
-            await handle_my_reservations(from_num, session, msg_text, lang)
-            return JSONResponse({"status": "ok"})
-
-        # ── "Book a Table" button shortcut ──────────────────────────────
-        if q in {"🪑 book a table", "book a table"} and step >= 0:
-            await handle_reservation_start(from_num, session, lang)
-            return JSONResponse({"status": "ok"})
-
-        # ── "My Reservations" button shortcut ──────────────────────────
-        if q in {"📅 my reservations", "my reservations"}:
-            await handle_my_reservations(from_num, session, msg_text, lang)
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
@@ -324,11 +711,11 @@ async def receive_message(request: Request):
                     "You're so welcome — it's truly my pleasure! 😊\n\n"
                     "• *Show menu* — browse all our dishes\n"
                     "• *Place order* — order your favourite food\n"
-                    "• *Book a table* — reserve a table with us 🪑\n\n"
+                    "• *Book a table* — reserve a table for dine-in\n\n"
                     "Anything else I can do for you? 🍽️"
                 ),
-                "ur": "خوشی ہوئی! 😊 اور کچھ چاہیے؟\n\n• *مینو دکھائیں*\n• *آرڈر دیں*\n• *میز بک کریں* 🪑",
-                "de": "Gern geschehen! 😊 Kann ich noch helfen?\n\n• *Menü anzeigen*\n• *Bestellen*\n• *Tisch reservieren* 🪑",
+                "ur": "خوشی ہوئی! 😊 اور کچھ چاہیے؟\n\n• *مینو دکھائیں*\n• *آرڈر دیں*\n• *ٹیبل بک کریں*",
+                "de": "Gern geschehen! 😊 Kann ich noch helfen?\n\n• *Menü anzeigen*\n• *Bestellen*\n• *Tisch reservieren*",
             }
             await send_whatsapp_text(from_num, thanks_msg.get(lang, thanks_msg["en"]))
             return JSONResponse({"status": "ok"})
@@ -1267,7 +1654,6 @@ async def receive_message(request: Request):
                                         "de": "📍 Fast geschafft! Lieferadresse angeben:",
                                     }
                                     await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
-            # ── end v14.7 FIX ────────────────────────────────────────────
 
             if handled:
                 return JSONResponse({"status": "ok"})
@@ -1386,7 +1772,7 @@ async def receive_message(request: Request):
             await send_whatsapp_buttons(
                 from_num,
                 reply,
-                ["View Menu 📋", "Place Order 🛒", "🪑 Book a Table"],
+                ["View Menu 📋", "Place Order 🛒", "Book a Table 🪑"],
             )
             return JSONResponse({"status": "ok"})
 
@@ -1434,8 +1820,7 @@ async def receive_message(request: Request):
                 )
             return JSONResponse({"status": "ok"})
 
-        # ── Smart AI-powered fallback ──────────────────────────
-        from whatsapp import _smart_fallback
+        # ── Smart AI-powered fallback ───────────────────────────
         smart_reply = await _smart_fallback(from_num, msg_text, lang)
         await send_whatsapp_text(from_num, smart_reply)
         return JSONResponse({"status": "ok"})
@@ -1709,112 +2094,293 @@ async def update_order_status(order_id: str, request: Request):
 
 
 # ============================================================
-# RESERVATIONS API  (CRM admin panel)
+# TABLE RESERVATIONS API  (Full CRUD)
 # ============================================================
 
 @app.get("/api/reservations")
 async def api_get_reservations(
-    status: Optional[str] = None,
-    date: Optional[str]   = None,
-    limit: int            = 100,
+    status:  Optional[str] = Query(None, description="Filter by status"),
+    date:    Optional[str] = Query(None, description="Filter by date YYYY-MM-DD"),
+    user_id: Optional[str] = Query(None, description="Filter by WhatsApp user_id"),
+    limit:   int           = Query(100, ge=1, le=500),
+    skip:    int           = Query(0, ge=0),
 ):
     """
-    List reservations. Optionally filter by status and/or date (YYYY-MM-DD).
+    List reservations with optional filters.
+    GET /api/reservations
+    GET /api/reservations?status=Pending
+    GET /api/reservations?date=2025-08-15
+    GET /api/reservations?user_id=923001234567
     """
-    reservations = get_all_reservations(status=status, date=date, limit=limit)
-    return {"reservations": reservations}
+    rows = get_reservations(status=status, date=date, user_id=user_id, limit=limit, skip=skip)
+    return {"reservations": rows, "count": len(rows)}
 
 
 @app.get("/api/reservations/stats")
 async def api_reservation_stats():
-    """Aggregate stats for the CRM dashboard."""
-    return get_reservation_stats()
+    """Aggregated counts per status — useful for the CRM dashboard widget."""
+    return {"stats": get_reservation_stats()}
+
+
+@app.get("/api/reservations/availability")
+async def api_check_availability(
+    date:   str = Query(..., description="Date YYYY-MM-DD"),
+    time:   str = Query(..., description="Time HH:MM"),
+    guests: int = Query(1, ge=1),
+):
+    """
+    Quick availability check before creating a reservation from the CRM.
+    GET /api/reservations/availability?date=2025-08-15&time=19:30&guests=4
+    """
+    result = check_table_availability(date, time, guests)
+    return result
 
 
 @app.get("/api/reservations/{reservation_id}")
 async def api_get_reservation(reservation_id: str):
-    """Fetch a single reservation by its ObjectId string."""
-    res = get_reservation(reservation_id)
-    if not res:
+    """Fetch a single reservation by ID."""
+    doc = get_reservation(reservation_id)
+    if not doc:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return res
+    return {"reservation": doc}
 
 
-@app.post("/api/reservations/{reservation_id}/status")
-async def api_update_reservation_status(reservation_id: str, request: Request):
+@app.post("/api/reservations")
+async def api_create_reservation(request: Request):
     """
-    Update the status of a reservation.
-    Body: { "status": "Confirmed" }
-    Sends a WhatsApp notification to the guest.
+    Create a reservation from the CRM / external API.
+    Body (JSON):
+    {
+      "user_id": "923001234567",   // optional — defaults to phone
+      "name": "Ahmed Khan",
+      "phone": "03001234567",
+      "date": "2025-08-15",        // YYYY-MM-DD
+      "time": "19:30",             // HH:MM
+      "guests": 4,
+      "table_number": "T5",        // optional
+      "special_requests": "...",   // optional
+      "notify_whatsapp": true      // optional — send WhatsApp confirmation
+    }
     """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
 
-    new_status = body.get("status", "").strip()
-    if new_status not in config.RESERVATION_STATUSES:
-        return JSONResponse(
-            {"message": f"Invalid status. Valid: {config.RESERVATION_STATUSES}"},
-            status_code=400,
-        )
+    required = ["name", "phone", "date", "time", "guests"]
+    missing  = [f for f in required if not body.get(f)]
+    if missing:
+        return JSONResponse({"message": f"Missing required fields: {missing}"}, status_code=400)
 
-    success = update_reservation_status(reservation_id, new_status)
-    if not success:
+    phone    = str(body["phone"]).strip()
+    user_id  = body.get("user_id", phone)
+    guests   = int(body["guests"])
+
+    # Availability check
+    avail = check_table_availability(body["date"], body["time"], guests)
+    if not avail["available"]:
+        return JSONResponse({
+            "message":        "No availability at the requested date/time.",
+            "conflict_count": avail["conflict_count"],
+        }, status_code=409)
+
+    res_id = create_reservation(
+        user_id          = user_id,
+        name             = body["name"],
+        phone            = phone,
+        date             = body["date"],
+        time             = body["time"],
+        guests           = guests,
+        table_number     = body.get("table_number"),
+        special_requests = body.get("special_requests", ""),
+        source           = "crm",
+    )
+
+    if res_id == "db_error":
+        return JSONResponse({"message": "Database error while saving reservation"}, status_code=500)
+
+    # Optional WhatsApp notification
+    if body.get("notify_whatsapp", False):
+        res_doc = get_reservation(res_id)
+        if res_doc:
+            msg = (
+                f"🎉 *Table Reserved!*\n\n"
+                f"📅 Date: {body['date']}  🕐 Time: {body['time']}\n"
+                f"👥 Guests: {guests}\n"
+                f"🔖 Booking ID: #{res_id[-6:]}\n\n"
+                f"We look forward to welcoming you! 🍽️"
+            )
+            asyncio.create_task(send_whatsapp_text(user_id, msg))
+
+    return JSONResponse({
+        "message":        "Reservation created successfully!",
+        "status":         "success",
+        "reservation_id": res_id,
+    }, status_code=201)
+
+
+@app.put("/api/reservations/{reservation_id}")
+async def api_update_reservation(reservation_id: str, request: Request):
+    """
+    Update any fields of a reservation (name, date, time, guests, table, requests).
+    Body (JSON) — send only the fields you want to change:
+    {
+      "date": "2025-08-20",
+      "time": "20:00",
+      "guests": 6,
+      "table_number": "T8",
+      "special_requests": "Vegan menu please",
+      "notify_whatsapp": true
+    }
+    """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    existing = get_reservation(reservation_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Reservation not found")
 
-    # WhatsApp notification to guest
-    if reservations_col is not None:
-        try:
-            from bson import ObjectId as ObjId
-            res_doc = reservations_col.find_one({"_id": ObjId(reservation_id)})
-            if res_doc:
-                user_id   = res_doc.get("user_id", "")
-                name      = res_doc.get("name", "Guest")
-                date      = res_doc.get("date", "")
-                time_slot = res_doc.get("time_slot", "")
-                ref       = reservation_id[-6:]
+    notify   = body.pop("notify_whatsapp", False)
+    allowed  = {"name", "phone", "date", "time", "guests", "table_number", "special_requests"}
+    updates  = {k: v for k, v in body.items() if k in allowed}
 
-                notif_map = {
-                    "Confirmed": (
-                        f"✅ *Reservation Confirmed!* 🎉\n\n"
-                        f"Hi *{name}*! Your table for *{date}* at *{time_slot}* is confirmed.\n"
-                        f"🔖 Ref: *#{ref}*\n\n"
-                        f"We look forward to seeing you! 🍽️"
-                    ),
-                    "Cancelled": (
-                        f"❌ *Reservation Cancelled*\n\n"
-                        f"Hi *{name}*, your reservation on *{date}* at *{time_slot}* "
-                        f"has been cancelled (Ref: *#{ref}*).\n\n"
-                        f"Sorry for any inconvenience — please book again whenever you're ready!"
-                    ),
-                    "Completed": (
-                        f"🎉 Thanks for dining with us, *{name}*! "
-                        f"We hope you had a wonderful experience. See you again soon! 😊"
-                    ),
-                    "No Show": (
-                        f"😔 Hi *{name}*, we noticed you weren't able to make it for your "
-                        f"reservation on *{date}* at *{time_slot}* (Ref: *#{ref}*). "
-                        f"Hope everything is okay — book again whenever you like!"
-                    ),
-                }
-                msg = notif_map.get(new_status)
-                if msg and user_id:
-                    asyncio.create_task(send_whatsapp_text(user_id, msg))
-        except Exception as e:
-            logger.warning(f"Reservation notification error: {e}")
+    if not updates:
+        return JSONResponse({"message": "No valid fields to update."}, status_code=400)
+
+    if "guests" in updates:
+        updates["guests"] = int(updates["guests"])
+
+    ok = update_reservation(reservation_id, updates)
+    if not ok:
+        return JSONResponse({"message": "Update failed — reservation not found."}, status_code=404)
+
+    if notify:
+        user_id = existing.get("user_id", existing.get("phone", ""))
+        merged  = {**existing, **updates}
+        msg     = (
+            f"📝 *Reservation Updated*\n\n"
+            f"📅 Date: {merged.get('date')}  🕐 Time: {merged.get('time')}\n"
+            f"👥 Guests: {merged.get('guests')}\n"
+            f"🔖 Booking ID: #{reservation_id[-6:]}\n\n"
+            f"See you then! 🍽️"
+        )
+        asyncio.create_task(send_whatsapp_text(user_id, msg))
+
+    updated = get_reservation(reservation_id)
+    return JSONResponse({"message": "Reservation updated!", "status": "success", "reservation": updated})
+
+
+@app.post("/api/reservations/{reservation_id}/status")
+async def api_update_reservation_status(reservation_id: str, request: Request):
+    """
+    Change only the status of a reservation.
+    Body: { "status": "Confirmed", "notify_whatsapp": true }
+    Valid statuses: Pending | Confirmed | Cancelled | Completed | No-Show
+    """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    new_status = body.get("status")
+    if new_status not in RESERVATION_STATUSES:
+        return JSONResponse({"message": f"Invalid status. Valid options: {RESERVATION_STATUSES}"}, status_code=400)
+
+    existing = get_reservation(reservation_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+
+    ok = update_reservation_status(reservation_id, new_status)
+    if not ok:
+        return JSONResponse({"message": "Status update failed."}, status_code=500)
+
+    if body.get("notify_whatsapp", False):
+        user_id   = existing.get("user_id", existing.get("phone", ""))
+        guest_name = existing.get("name", "Guest")
+        status_messages = {
+            "Confirmed":  f"✅ Great news, *{guest_name}*! Your table reservation on *{existing.get('date')}* at *{existing.get('time')}* is now *confirmed*. See you soon! 🍽️",
+            "Cancelled":  f"❌ Your reservation on *{existing.get('date')}* at *{existing.get('time')}* has been *cancelled*. Contact us if this was a mistake.",
+            "Completed":  f"🙏 Thank you for dining with us, *{guest_name}*! We hope to see you again soon. 😊",
+            "No-Show":    f"😔 We noticed you couldn't make it for your reservation on *{existing.get('date')}*. Feel free to book again anytime!",
+            "Pending":    f"⏳ Your reservation is now *pending* review. We'll confirm shortly, *{guest_name}*!",
+        }
+        msg = status_messages.get(new_status, f"📋 Reservation status updated to: *{new_status}*")
+        asyncio.create_task(send_whatsapp_text(user_id, msg))
 
     return JSONResponse({"message": f"Reservation status updated to {new_status}", "status": "success"})
 
 
 @app.delete("/api/reservations/{reservation_id}")
-async def api_delete_reservation(reservation_id: str):
-    """Hard-delete a reservation (admin use only)."""
-    from database import delete_reservation as db_delete_reservation
-    success = db_delete_reservation(reservation_id)
-    if not success:
+async def api_delete_reservation(reservation_id: str, notify: bool = Query(False)):
+    """
+    Hard-delete a reservation.
+    DELETE /api/reservations/{id}
+    DELETE /api/reservations/{id}?notify=true   ← also sends WhatsApp cancellation
+    """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+
+    existing = get_reservation(reservation_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return JSONResponse({"message": "Reservation deleted", "status": "success"})
+
+    if notify:
+        user_id    = existing.get("user_id", existing.get("phone", ""))
+        guest_name = existing.get("name", "Guest")
+        msg        = (
+            f"🗑️ *Reservation Removed*\n\n"
+            f"Hi *{guest_name}*, your reservation on *{existing.get('date')}* at *{existing.get('time')}* "
+            f"has been removed from our system.\n\n"
+            f"Please contact us if you believe this is an error."
+        )
+        asyncio.create_task(send_whatsapp_text(user_id, msg))
+
+    ok = delete_reservation(reservation_id)
+    if not ok:
+        return JSONResponse({"message": "Delete failed."}, status_code=500)
+
+    return JSONResponse({"message": "Reservation deleted successfully.", "status": "success"})
+
+
+@app.post("/api/reservations/{reservation_id}/notify")
+async def api_notify_reservation(reservation_id: str, request: Request):
+    """
+    Send a custom or templated WhatsApp notification for a reservation.
+    Body: { "message": "Custom message text" }   ← optional; uses smart default if omitted
+    """
+    existing = get_reservation(reservation_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    user_id    = existing.get("user_id", existing.get("phone", ""))
+    guest_name = existing.get("name", "Guest")
+
+    custom_msg = body.get("message", "").strip()
+    if not custom_msg:
+        custom_msg = (
+            f"📋 *Reservation Reminder*\n\n"
+            f"Hi *{guest_name}*! Just a friendly reminder about your table booking:\n\n"
+            f"📅 Date   : {existing.get('date')}\n"
+            f"🕐 Time   : {existing.get('time')}\n"
+            f"👥 Guests : {existing.get('guests')}\n\n"
+            f"We look forward to seeing you! 🍽️"
+        )
+
+    asyncio.create_task(send_whatsapp_text(user_id, custom_msg))
+    return JSONResponse({"message": "WhatsApp notification sent!", "status": "success"})
 
 
 # ============================================================
@@ -2006,19 +2572,16 @@ async def track_spice(spice: str = Form(...)):
 async def get_api_data():
     load_data_realtime()
     try:
-        orders       = []
-        analytics    = {}
-        reservations = []
+        orders    = []
+        analytics = {}
         if orders_col is not None:
             orders = [_str_id(o) for o in orders_col.find({}).sort("timestamp", DESCENDING).limit(50)]
         if analytics_col is not None:
             analytics = _str_id(analytics_col.find_one({"type": "analytics"}) or {})
-        reservations = get_all_reservations(limit=20)
         return {
-            "products":     config.PRODUCTS_DATA,
-            "orders":       orders,
-            "analytics":    analytics,
-            "reservations": reservations,
+            "products":  config.PRODUCTS_DATA,
+            "orders":    orders,
+            "analytics": analytics,
             "config": {
                 "faq":                 config.BOT_DATA.get("faq", {}),
                 "initial_message":     config.BOT_DATA.get("initial_message", {}),
@@ -2030,7 +2593,7 @@ async def get_api_data():
         }
     except Exception as e:
         logger.error(f"API data error: {e}")
-        return {"products": [], "orders": [], "analytics": {}, "reservations": [], "config": {}}
+        return {"products": [], "orders": [], "analytics": {}, "config": {}}
 
 
 # ============================================================
@@ -2049,5 +2612,5 @@ async def startup_event():
     logger.info(f"   Delivery charges   : {config.BOT_DATA.get('delivery_charges', {})}")
     logger.info(f"   WhatsApp connected : {'✅' if config.WHATSAPP_TOKEN else '❌'}")
     logger.info(f"   MongoDB connected  : {'✅' if products_col is not None else '❌'}")
-    logger.info(f"   Reservations DB    : {'✅' if reservations_col is not None else '❌'}")
+    logger.info(f"   Reservations coll  : {'✅' if reservations_col is not None else '❌'}")
     logger.info(f"   AI fallback        : {'✅' if config.ANTHROPIC_API_KEY else '⚠️  Static fallback active'}")
