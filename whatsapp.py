@@ -1,7 +1,5 @@
 """
-whatsapp.py — WhatsApp API helpers, smart fallback (Claude AI), bot flow helpers,
-              and Table Reservation flow message helpers
-WhatsApp AI Restaurant Bot v14.7 + Table Reservations
+whatsapp.py — WhatsApp API helpers, smart fallback (Claude AI), bot flow helpers
 """
 
 import re
@@ -17,7 +15,7 @@ from products import (
     _extract_extras_from_text,
 )
 
-logger = logging.getLogger("RestaurantBot.v14.7")
+logger = logging.getLogger("RestaurantBot.v14.6")
 
 # ============================================================
 # WHATSAPP API HELPERS
@@ -96,15 +94,13 @@ async def _smart_fallback(from_number: str, user_message: str, lang: str) -> str
         f"You are Zara, a warm, friendly, and professional WhatsApp restaurant assistant. "
         f"You speak like a real human restaurant staff member — conversational, caring, and enthusiastic about food. "
         f"The restaurant serves: {product_list}. "
-        f"We also accept table reservations — guests can book a table by saying 'book a table' or 'reserve a table'. "
         f"Respond in {'Urdu' if lang == 'ur' else 'German' if lang == 'de' else 'English'}, "
         f"keeping replies under 3 sentences. "
         f"Use relevant food emojis naturally. "
         f"If someone asks about a dish, describe it with genuine enthusiasm and gently guide them to order. "
-        f"If someone asks about a table, guide them to say 'book a table'. "
-        f"If confused, apologise warmly and redirect to food ordering or table booking. "
+        f"If confused, apologise warmly and redirect to food ordering. "
         f"Never sound robotic or use formal language. "
-        f"If completely unrelated to food/restaurant, say warmly that you specialise in food and reservations only."
+        f"If completely unrelated to food/restaurant, say warmly that you specialise in food only."
     )
 
     try:
@@ -142,8 +138,7 @@ def _static_fallback(lang: str) -> str:
             "🍽️ *Show menu* — browse everything we've got\n"
             "📦 *Order [dish]* — e.g. _'Zinger Burger'_ or _'1kg Karahi'_\n"
             "💰 *All prices* — see our full price list\n"
-            "📍 *Order status* — track your latest order\n"
-            "🪑 *Book a table* — reserve a table with us\n\n"
+            "📍 *Order status* — track your latest order\n\n"
             "Just tell me what you're craving and I'll sort it out! 😊"
         ),
         "ur": (
@@ -151,8 +146,7 @@ def _static_fallback(lang: str) -> str:
             "🍽️ *مینو دکھائیں* — سب آئٹم دیکھیں\n"
             "📦 *آرڈر [ڈش]* — جیسے _'بریانی'_ یا _'1kg کڑاہی'_\n"
             "💰 *تمام قیمتیں* — قیمت کی فہرست\n"
-            "📍 *آرڈر اسٹیٹس* — ٹریکنگ\n"
-            "🪑 *میز بک کریں* — ریزرویشن\n\n"
+            "📍 *آرڈر اسٹیٹس* — ٹریکنگ\n\n"
             "بس بتائیں، میں مدد کروں گا! 😊"
         ),
         "de": (
@@ -161,8 +155,7 @@ def _static_fallback(lang: str) -> str:
             "🍽️ *Menü anzeigen* — alle Gerichte\n"
             "📦 *[Gericht] bestellen* — z.B. _'Zinger Burger'_\n"
             "💰 *Alle Preise* — komplette Preisliste\n"
-            "📍 *Bestellstatus* — verfolgen\n"
-            "🪑 *Tisch reservieren* — Tischbuchung\n\n"
+            "📍 *Bestellstatus* — verfolgen\n\n"
             "Einfach eingeben, was Sie möchten! 😊"
         ),
     }
@@ -170,7 +163,7 @@ def _static_fallback(lang: str) -> str:
 
 
 # ============================================================
-# BOT FLOW HELPERS — ORDER
+# BOT FLOW HELPERS
 # ============================================================
 
 async def _ask_size(to: str, product: Dict, lang: str):
@@ -284,171 +277,3 @@ async def _ask_multi_spice(to: str, items_needing_spice: List[Dict], product: Di
         ),
     }
     await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
-
-
-# ============================================================
-# BOT FLOW HELPERS — RESERVATION
-# ============================================================
-
-async def _ask_reservation_name(to: str, lang: str):
-    """Step -1: Ask the guest for their name."""
-    msgs = {
-        "en": (
-            "🪑 *Table Reservation*\n\n"
-            "I'd love to get that booked for you! 😊\n\n"
-            "First, could you share your *name* for the reservation?"
-        ),
-        "ur": (
-            "🪑 *میز ریزرویشن*\n\n"
-            "بہت خوشی ہوئی! 😊\n\n"
-            "پہلے اپنا *نام* بتائیں جو ریزرویشن کے لیے درج ہو:"
-        ),
-        "de": (
-            "🪑 *Tischreservierung*\n\n"
-            "Sehr gerne! 😊\n\n"
-            "Auf welchen *Namen* soll ich die Reservierung machen?"
-        ),
-    }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
-
-
-async def _ask_reservation_date(to: str, lang: str):
-    """Step -2: Ask for the preferred date."""
-    msgs = {
-        "en": (
-            "📅 *What date* would you like to dine with us?\n\n"
-            "_(e.g. *tomorrow*, *25 May*, *2026-05-28*)_"
-        ),
-        "ur": (
-            "📅 آپ کس *تاریخ* کو تشریف لانا چاہتے ہیں؟\n\n"
-            "_(مثال: *کل*، *25 مئی*، *2026-05-28*)_"
-        ),
-        "de": (
-            "📅 An welchem *Datum* möchten Sie bei uns speisen?\n\n"
-            "_(z.B. *morgen*, *25. Mai*, *28.05.2026*)_"
-        ),
-    }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
-
-
-async def _ask_reservation_time(to: str, lang: str):
-    """Step -3: Ask for preferred time slot."""
-    # Show a condensed list of available slots
-    slots = config.RESERVATION_TIME_SLOTS
-    mid   = len(slots) // 2
-    slot_str_1 = "  •  ".join(slots[:mid])
-    slot_str_2 = "  •  ".join(slots[mid:])
-    msgs = {
-        "en": (
-            f"🕐 *What time* suits you best?\n\n"
-            f"Available slots:\n"
-            f"_{slot_str_1}_\n"
-            f"_{slot_str_2}_\n\n"
-            f"_(Just type your preferred time, e.g. *7pm* or *19:00*)_"
-        ),
-        "ur": (
-            f"🕐 آپ کس *وقت* آنا چاہتے ہیں؟\n\n"
-            f"دستیاب اوقات:\n"
-            f"_{slot_str_1}_\n"
-            f"_{slot_str_2}_\n\n"
-            f"_(وقت لکھیں، مثال: *7pm* یا *19:00*)_"
-        ),
-        "de": (
-            f"🕐 Zu welcher *Uhrzeit* kommen Sie?\n\n"
-            f"Verfügbare Zeiten:\n"
-            f"_{slot_str_1}_\n"
-            f"_{slot_str_2}_\n\n"
-            f"_(Einfach eingeben, z.B. *19:00* oder *7pm*)_"
-        ),
-    }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
-
-
-async def _ask_reservation_guests(to: str, lang: str):
-    """Step -4: Ask for number of guests."""
-    msgs = {
-        "en": (
-            f"👥 *How many guests* will be joining?\n\n"
-            f"_(Maximum {config.RESERVATION_MAX_GUESTS} guests per reservation)_"
-        ),
-        "ur": (
-            f"👥 کتنے *مہمان* تشریف لائیں گے؟\n\n"
-            f"_(زیادہ سے زیادہ {config.RESERVATION_MAX_GUESTS} مہمان)_"
-        ),
-        "de": (
-            f"👥 Wie viele *Gäste* kommen?\n\n"
-            f"_(Maximal {config.RESERVATION_MAX_GUESTS} Gäste pro Reservierung)_"
-        ),
-    }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
-
-
-async def _ask_reservation_notes(to: str, lang: str):
-    """Step -5: Ask for any special notes/requests."""
-    msgs = {
-        "en": (
-            "📝 Any *special requests* or notes for us?\n\n"
-            "_(e.g. window seat, birthday celebration, allergies — or type *no* to skip)_"
-        ),
-        "ur": (
-            "📝 کوئی خاص *فرمائش* یا نوٹ ہے؟\n\n"
-            "_(جیسے: کھڑکی کی نشست، سالگرہ — یا *no* لکھیں)_"
-        ),
-        "de": (
-            "📝 *Besondere Wünsche* oder Anmerkungen?\n\n"
-            "_(z.B. Fensterplatz, Geburtstag, Allergien — oder *nein* eingeben)_"
-        ),
-    }
-    await send_whatsapp_text(to, msgs.get(lang, msgs["en"]))
-
-
-async def _ask_reservation_confirm(to: str, pending: Dict, lang: str):
-    """Step -6: Show reservation summary and ask for confirmation."""
-    name      = pending.get("name", "—")
-    date      = pending.get("date", "—")
-    time_slot = pending.get("time_slot", "—")
-    guests    = pending.get("guests", "—")
-    notes     = pending.get("notes", "") or {
-        "en": "None", "ur": "کچھ نہیں", "de": "Keine"
-    }.get(lang, "None")
-
-    msgs = {
-        "en": (
-            f"🪑 *Please confirm your reservation:*\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 Name: *{name}*\n"
-            f"📅 Date: *{date}*\n"
-            f"🕐 Time: *{time_slot}*\n"
-            f"👥 Guests: *{guests}*\n"
-            f"📝 Notes: _{notes}_\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Tap *Confirm* to lock in your table, or *Cancel* to start over 😊"
-        ),
-        "ur": (
-            f"🪑 *ریزرویشن کی تصدیق کریں:*\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 نام: *{name}*\n"
-            f"📅 تاریخ: *{date}*\n"
-            f"🕐 وقت: *{time_slot}*\n"
-            f"👥 مہمان: *{guests}*\n"
-            f"📝 نوٹ: _{notes}_\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"*تصدیق* کریں یا *منسوخ* کریں 😊"
-        ),
-        "de": (
-            f"🪑 *Bitte bestätigen Sie Ihre Reservierung:*\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 Name: *{name}*\n"
-            f"📅 Datum: *{date}*\n"
-            f"🕐 Uhrzeit: *{time_slot}*\n"
-            f"👥 Gäste: *{guests}*\n"
-            f"📝 Notiz: _{notes}_\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"*Bestätigen* oder *Abbrechen* 😊"
-        ),
-    }
-    await send_whatsapp_buttons(
-        to,
-        msgs.get(lang, msgs["en"]),
-        ["✅ Confirm Reservation", "❌ Cancel Reservation"],
-    )
