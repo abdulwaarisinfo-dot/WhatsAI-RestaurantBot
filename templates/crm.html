@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>RestaurantBot CRM v14.1</title>
+<title>RestaurantBot CRM v14.7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
@@ -34,6 +34,8 @@
   --amber-bg:  #FFF8E6;
   --purple:    #6D28D9;
   --purple-bg: #F3EEFF;
+  --teal:      #0891B2;
+  --teal-bg:   #ECFEFF;
   --mono:      'JetBrains Mono', monospace;
   --r:         8px;
   --r-sm:      5px;
@@ -134,6 +136,7 @@ input, select, textarea { font-family: inherit; outline: none; }
    STAT CARDS
 ═══════════════════════════════════════════════════ */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.stats-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
 .sc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; box-shadow: var(--sh); transition: box-shadow .15s, transform .15s; }
 .sc:hover { box-shadow: var(--sh-md); transform: translateY(-1px); }
 .sc-icon { font-size: 20px; margin-bottom: 12px; }
@@ -168,6 +171,8 @@ input, select, textarea { font-family: inherit; outline: none; }
 .btn-amber:hover { background: #fef3c7; }
 .btn-purple { background: var(--purple-bg); color: var(--purple); border: 1px solid #C4B5FD; }
 .btn-purple:hover { background: #ede9fe; }
+.btn-teal { background: var(--teal-bg); color: var(--teal); border: 1px solid #A5F3FC; }
+.btn-teal:hover { background: #cffafe; }
 .btn-sm { padding: 6px 11px; font-size: 11px; }
 .btn-icon { padding: 7px; border-radius: var(--r-sm); }
 
@@ -187,11 +192,16 @@ tr:hover td { background: var(--bg); }
 ═══════════════════════════════════════════════════ */
 .pill { display: inline-flex; align-items: center; gap: 4px; border-radius: 20px; font-size: 11px; font-weight: 600; padding: 3px 9px; white-space: nowrap; }
 .pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .6; }
-.pill-Pending { background: var(--amber-bg); color: var(--amber); }
-.pill-Accepted { background: var(--accent-bg); color: var(--accent); }
-.pill-Processing { background: var(--purple-bg); color: var(--purple); }
-.pill-Delivered { background: var(--green-bg); color: var(--green); }
-.pill-Rejected { background: var(--red-bg); color: var(--red); }
+.pill-Pending   { background: var(--amber-bg);  color: var(--amber);  }
+.pill-Accepted  { background: var(--accent-bg); color: var(--accent); }
+.pill-Processing{ background: var(--purple-bg); color: var(--purple); }
+.pill-Delivered { background: var(--green-bg);  color: var(--green);  }
+.pill-Rejected  { background: var(--red-bg);    color: var(--red);    }
+/* Reservation statuses */
+.pill-Confirmed  { background: var(--green-bg);  color: var(--green);  }
+.pill-Cancelled  { background: var(--red-bg);    color: var(--red);    }
+.pill-Completed  { background: var(--teal-bg);   color: var(--teal);   }
+.pill-No\ Show   { background: #F3F4F6; color: #6B7280; }
 
 /* ═══════════════════════════════════════════════════
    FORM ELEMENTS
@@ -305,6 +315,27 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 .od-total-box { background: var(--accent); color: #fff; border-radius: var(--r-sm); padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
 
 /* ═══════════════════════════════════════════════════
+   RESERVATION CARDS
+═══════════════════════════════════════════════════ */
+.reservations-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.res-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; box-shadow: var(--sh); transition: box-shadow .15s; }
+.res-card:hover { box-shadow: var(--sh-md); }
+.res-card.is-pending { border-left: 3px solid var(--amber); }
+.res-card.is-confirmed { border-left: 3px solid var(--green); }
+.res-card.is-cancelled { border-left: 3px solid var(--red); opacity: .8; }
+.res-card.is-completed { border-left: 3px solid var(--teal); }
+.rc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+.rc-id { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.rc-name { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.rc-phone { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.rc-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.rc-detail { background: var(--surface2); border: 1px solid var(--border2); border-radius: var(--r-sm); padding: 7px 9px; }
+.rc-detail-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+.rc-detail-val { font-size: 12px; font-weight: 600; color: var(--text); }
+.rc-notes { font-size: 11px; color: var(--muted); background: var(--surface2); border: 1px solid var(--border2); border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 10px; font-style: italic; }
+.rc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ═══════════════════════════════════════════════════
    ANALYTICS BARS
 ═══════════════════════════════════════════════════ */
 .an-bar { margin-bottom: 12px; }
@@ -325,7 +356,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
    LANG TABS
 ═══════════════════════════════════════════════════ */
 .ltabs { display: flex; gap: 5px; margin-bottom: 14px; }
-.ltab { padding: 5px 12px; border-radius: var(--r-sm); font-size: 11px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; transition: all .12s; }
+.ltab { padding: 5px 12px; border-radius: var(--r-sm); font-size: 11px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; transition: all .12px; }
 .ltab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ═══════════════════════════════════════════════════
@@ -370,77 +401,31 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 /* ═══════════════════════════════════════════════════
    MAP
 ═══════════════════════════════════════════════════ */
-#delivery-map {
-  width: 100%; height: 480px;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  box-shadow: var(--sh-md);
-}
-.map-search-bar {
-  display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
-}
-.map-search-bar input {
-  flex: 1; border: 1.5px solid var(--border); border-radius: var(--r-sm);
-  padding: 9px 12px; font-size: 13px; color: var(--text);
-  background: var(--surface2); font-family: inherit;
-  transition: border-color .15s, box-shadow .15s;
-}
+#delivery-map { width: 100%; height: 480px; border-radius: var(--r-lg); border: 1px solid var(--border); overflow: hidden; box-shadow: var(--sh-md); }
+.map-search-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.map-search-bar input { flex: 1; border: 1.5px solid var(--border); border-radius: var(--r-sm); padding: 9px 12px; font-size: 13px; color: var(--text); background: var(--surface2); font-family: inherit; transition: border-color .15s, box-shadow .15s; }
 .map-search-bar input:focus { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px rgba(26,86,219,.08); outline: none; }
-#map-search-results {
-  position: absolute; z-index: 9999;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-sm); box-shadow: var(--sh-md);
-  max-height: 200px; overflow-y: auto;
-  width: calc(100% - 120px);
-  display: none;
-}
-#map-search-results .res-item {
-  padding: 9px 12px; font-size: 12px; cursor: pointer;
-  border-bottom: 1px solid var(--border2); color: var(--text);
-  transition: background .1s;
-}
+#map-search-results { position: absolute; z-index: 9999; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); box-shadow: var(--sh-md); max-height: 200px; overflow-y: auto; width: calc(100% - 120px); display: none; }
+#map-search-results .res-item { padding: 9px 12px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--border2); color: var(--text); transition: background .1s; }
 #map-search-results .res-item:hover { background: var(--accent-bg); color: var(--accent); }
 #map-search-results .res-item:last-child { border-bottom: none; }
-.map-type-bar {
-  display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;
-}
-.map-type-btn {
-  padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text2);
-  cursor: pointer; transition: all .12s;
-}
+.map-type-bar { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.map-type-btn { padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); color: var(--text2); cursor: pointer; transition: all .12s; }
 .map-type-btn:hover { color: var(--text); border-color: var(--text2); }
 .map-type-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.map-legend {
-  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
-  padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border2);
-  border-radius: var(--r-sm); margin-bottom: 12px; font-size: 11px;
-}
+.map-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border2); border-radius: var(--r-sm); margin-bottom: 12px; font-size: 11px; }
 .map-legend-item { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text2); }
 .map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .map-area-list { max-height: 260px; overflow-y: auto; }
-.map-area-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 12px; border-bottom: 1px solid var(--border2);
-  font-size: 12px; cursor: pointer; transition: background .1s;
-}
+.map-area-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border2); font-size: 12px; cursor: pointer; transition: background .1s; }
 .map-area-item:hover { background: var(--accent-bg); }
 .map-area-item:last-child { border-bottom: none; }
 .map-area-color { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .map-area-name { flex: 1; font-weight: 600; color: var(--text); }
 .map-area-charge-badge { font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--accent-bg); color: var(--accent); border-radius: 4px; padding: 2px 8px; }
-.map-instructions {
-  background: var(--accent-bg); border: 1px solid #C7D9FB; border-radius: var(--r-sm);
-  padding: 10px 14px; font-size: 12px; color: var(--accent); margin-bottom: 12px;
-  line-height: 1.6;
-}
-.marker-popup {
-  font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6;
-}
+.map-instructions { background: var(--accent-bg); border: 1px solid #C7D9FB; border-radius: var(--r-sm); padding: 10px 14px; font-size: 12px; color: var(--accent); margin-bottom: 12px; line-height: 1.6; }
+.marker-popup { font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; }
 .marker-popup b { color: var(--accent); }
-
-/* Leaflet overrides */
 .leaflet-popup-content-wrapper { border-radius: var(--r); box-shadow: var(--sh-md); border: 1px solid var(--border); }
 .leaflet-popup-content { margin: 12px 14px; font-family: 'Inter', sans-serif; font-size: 13px; }
 .leaflet-popup-tip-container { display: none; }
@@ -453,7 +438,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 /* ═══════════════════════════════════════════════════
    RESPONSIVE
 ═══════════════════════════════════════════════════ */
-@media (max-width: 1100px) { .stats { grid-template-columns: 1fr 1fr; } .grid-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 1100px) { .stats,.stats-5 { grid-template-columns: 1fr 1fr; } .grid-3 { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 768px) {
   :root { --sidebar-w: 228px; }
   .sidebar { transform: translateX(-100%); }
@@ -461,8 +446,8 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
   .main { margin-left: 0; padding: 20px 16px 36px; }
   .menu-toggle { display: flex; }
   .ph { padding-top: 44px; }
-  .stats { grid-template-columns: 1fr 1fr; }
-  .orders-grid { grid-template-columns: 1fr; }
+  .stats,.stats-5 { grid-template-columns: 1fr 1fr; }
+  .orders-grid, .reservations-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .products-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
@@ -471,7 +456,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
   .ph-right { width: 100%; }
   #delivery-map { height: 320px; }
 }
-@media (max-width: 480px) { .stats { grid-template-columns: 1fr; } .sc-val { font-size: 24px; } }
+@media (max-width: 480px) { .stats,.stats-5 { grid-template-columns: 1fr; } .sc-val { font-size: 24px; } }
 </style>
 </head>
 <body>
@@ -483,7 +468,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       <div class="lc-icon">🍽️</div>
       <div>
         <div class="lc-title">RestaurantBot</div>
-        <div class="lc-sub">CRM Admin Panel v14.1</div>
+        <div class="lc-sub">CRM Admin Panel v14.7</div>
       </div>
     </div>
     <label>Username</label>
@@ -506,7 +491,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       <div class="sb-icon">🍽️</div>
       <div>
         <div class="sb-name">RestaurantBot</div>
-        <div class="sb-ver">CRM v14.1</div>
+        <div class="sb-ver">CRM v14.7</div>
       </div>
     </div>
     <nav class="sb-nav">
@@ -520,6 +505,11 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
         Live Orders
         <span class="nav-badge" id="pending-badge">0</span>
+      </div>
+      <div class="nav-item" data-page="reservations" onclick="showPage('reservations',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Reservations
+        <span class="nav-badge" id="res-pending-badge">0</span>
       </div>
       <div class="nav-item" data-page="products" onclick="showPage('products',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
@@ -568,11 +558,12 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </button>
         </div>
       </div>
-      <div class="stats">
+      <div class="stats-5">
         <div class="sc"><div class="sc-icon">📦</div><div class="sc-label">Total Orders</div><div class="sc-val" id="d-orders">—</div><div class="sc-sub">All time loaded</div></div>
         <div class="sc"><div class="sc-icon">⏳</div><div class="sc-label">Pending</div><div class="sc-val" id="d-pending">—</div><div class="sc-sub">Awaiting action</div></div>
         <div class="sc"><div class="sc-icon">✅</div><div class="sc-label">Delivered</div><div class="sc-val" id="d-delivered">—</div><div class="sc-sub">Completed</div></div>
-        <div class="sc"><div class="sc-icon">💰</div><div class="sc-label">Revenue</div><div class="sc-val" id="d-revenue">—</div><div class="sc-sub">PKR · delivered orders</div></div>
+        <div class="sc"><div class="sc-icon">🪑</div><div class="sc-label">Reservations</div><div class="sc-val" id="d-res-total">—</div><div class="sc-sub">All time</div></div>
+        <div class="sc"><div class="sc-icon">💰</div><div class="sc-label">Revenue</div><div class="sc-val" id="d-revenue">—</div><div class="sc-sub">PKR · delivered</div></div>
       </div>
       <div class="grid-2">
         <div class="card">
@@ -584,16 +575,30 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           <div id="d-breakdown"></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head">
-          <div><div class="card-title">🕐 Recent Orders</div><div class="card-sub">Latest 10 orders</div></div>
-          <button class="btn btn-ghost btn-sm" onclick="showPage('orders',document.querySelector('[data-page=orders]'))">View All →</button>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head">
+            <div><div class="card-title">🕐 Recent Orders</div><div class="card-sub">Latest 10 orders</div></div>
+            <button class="btn btn-ghost btn-sm" onclick="showPage('orders',document.querySelector('[data-page=orders]'))">View All →</button>
+          </div>
+          <div class="tbl-wrap">
+            <table id="d-tbl">
+              <thead><tr><th>Order ID</th><th>Items</th><th>Customer</th><th>Total</th><th>Delivery</th><th>Status</th><th>Placed</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
-        <div class="tbl-wrap">
-          <table id="d-tbl">
-            <thead><tr><th>Order ID</th><th>Items</th><th>Customer</th><th>Total</th><th>Delivery</th><th>Status</th><th>Placed</th></tr></thead>
-            <tbody></tbody>
-          </table>
+        <div class="card">
+          <div class="card-head">
+            <div><div class="card-title">🪑 Recent Reservations</div><div class="card-sub">Latest 5 bookings</div></div>
+            <button class="btn btn-ghost btn-sm" onclick="showPage('reservations',document.querySelector('[data-page=reservations]'))">View All →</button>
+          </div>
+          <div class="tbl-wrap">
+            <table id="d-res-tbl">
+              <thead><tr><th>Ref</th><th>Name</th><th>Date</th><th>Time</th><th>Guests</th><th>Status</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -621,6 +626,83 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <div class="ftab" onclick="setOrderFilter('Rejected',this)">✗ Rejected</div>
       </div>
       <div class="orders-grid" id="orders-grid"></div>
+    </div>
+
+    <!-- ══════════ RESERVATIONS ══════════ -->
+    <div class="page" id="page-reservations">
+      <div class="ph">
+        <div class="ph-left">
+          <div class="ph-title">Reservations <span>Table Bookings</span></div>
+          <div class="ph-sub">Manage dine-in reservations · GET/PATCH /api/reservations · Auto-sends WhatsApp updates</div>
+        </div>
+        <div class="ph-right">
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input class="search-input" id="res-search" placeholder="Search name, phone…" oninput="filterReservations(this.value)"/>
+          </div>
+          <input type="date" class="fi btn-sm" id="res-date-filter" style="width:150px" oninput="filterReservationsByDate(this.value)" title="Filter by date"/>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('res-date-filter').value='';fetchData()">Clear Filter</button>
+          <button class="btn btn-primary btn-sm" onclick="openCreateReservationModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Reservation
+          </button>
+        </div>
+      </div>
+
+      <!-- Reservation Stats Bar -->
+      <div class="stats">
+        <div class="sc"><div class="sc-icon">🪑</div><div class="sc-label">Total Bookings</div><div class="sc-val" id="rs-total">—</div><div class="sc-sub">All time</div></div>
+        <div class="sc"><div class="sc-icon">⏳</div><div class="sc-label">Pending</div><div class="sc-val" id="rs-pending">—</div><div class="sc-sub">Awaiting confirm</div></div>
+        <div class="sc"><div class="sc-icon">✅</div><div class="sc-label">Confirmed</div><div class="sc-val" id="rs-confirmed">—</div><div class="sc-sub">Ready to seat</div></div>
+        <div class="sc"><div class="sc-icon">📅</div><div class="sc-label">Today</div><div class="sc-val" id="rs-today">—</div><div class="sc-sub">Today's bookings</div></div>
+      </div>
+
+      <!-- Filter tabs -->
+      <div class="ftabs">
+        <div class="ftab active" onclick="setResFilter('',this)">All</div>
+        <div class="ftab" onclick="setResFilter('Pending',this)">⏳ Pending</div>
+        <div class="ftab" onclick="setResFilter('Confirmed',this)">✅ Confirmed</div>
+        <div class="ftab" onclick="setResFilter('Completed',this)">🎉 Completed</div>
+        <div class="ftab" onclick="setResFilter('Cancelled',this)">❌ Cancelled</div>
+        <div class="ftab" onclick="setResFilter('No Show',this)">🚫 No Show</div>
+      </div>
+
+      <!-- Table view -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head">
+          <div class="card-title">All Reservations</div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="toggleResView('table')" id="view-table-btn" style="background:var(--accent-bg);color:var(--accent);border-color:var(--accent)">Table View</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleResView('card')" id="view-card-btn">Card View</button>
+          </div>
+        </div>
+        <!-- TABLE VIEW -->
+        <div id="res-table-view">
+          <div class="tbl-wrap">
+            <table id="res-tbl">
+              <thead>
+                <tr>
+                  <th>Ref #</th>
+                  <th>Name</th>
+                  <th>WhatsApp</th>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Guests</th>
+                  <th>Notes</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="res-tbl-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <!-- CARD VIEW (hidden by default) -->
+        <div id="res-card-view" style="display:none">
+          <div class="reservations-grid" id="reservations-grid"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ══════════ PRODUCTS ══════════ -->
@@ -694,8 +776,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </button>
         </div>
       </div>
-
-      <!-- Delivery Time -->
       <div class="card">
         <div class="card-head"><div><div class="card-title">⏱️ Delivery Time</div><div class="card-sub">GET/POST /api/delivery-time</div></div></div>
         <div class="form-grid">
@@ -711,10 +791,8 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </div>
         </div>
       </div>
-
-      <!-- Delivery Charges -->
       <div class="card">
-        <div class="card-head"><div><div class="card-title">💸 Delivery Charges</div><div class="card-sub">GET/POST /api/delivery-charges · flat_charge, free_above, per_area, free_keywords</div></div></div>
+        <div class="card-head"><div><div class="card-title">💸 Delivery Charges</div><div class="card-sub">GET/POST /api/delivery-charges</div></div></div>
         <div class="form-grid">
           <div class="fg">
             <label class="fl">Flat Charge (PKR)</label>
@@ -733,8 +811,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </div>
         </div>
       </div>
-
-      <!-- MAP SECTION -->
       <div class="card">
         <div class="card-head">
           <div>
@@ -749,12 +825,9 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
             </button>
           </div>
         </div>
-
         <div class="map-instructions">
-          📍 <strong>How to use:</strong> Search for a neighbourhood/area using the search bar, or click anywhere on the map to drop a pin. Set the delivery charge for that zone, then click <em>"Apply to Charges"</em> to sync with the delivery charges form below.
+          📍 <strong>How to use:</strong> Search for a neighbourhood/area, or click anywhere on the map to drop a pin. Set the delivery charge for that zone, then click <em>"Apply to Charges"</em> to sync.
         </div>
-
-        <!-- Map type selector -->
         <div class="map-type-bar">
           <span style="font-size:11px;font-weight:600;color:var(--muted);margin-right:4px">Map Style:</span>
           <button class="map-type-btn active" onclick="switchMapTile('streets',this)">🗺️ Streets</button>
@@ -762,11 +835,9 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           <button class="map-type-btn" onclick="switchMapTile('dark',this)">🌙 Dark</button>
           <div style="margin-left:auto;font-size:11px;color:var(--muted)" id="map-click-hint">Click map to add area</div>
         </div>
-
-        <!-- Map search -->
         <div style="position:relative">
           <div class="map-search-bar">
-            <input type="text" id="map-search-input" placeholder="Search area, neighbourhood or city… (e.g. Gulshan-e-Iqbal, Karachi)" oninput="debounceMapSearch(this.value)" onkeydown="if(event.key==='Enter')mapSearchGo()"/>
+            <input type="text" id="map-search-input" placeholder="Search area, neighbourhood or city…" oninput="debounceMapSearch(this.value)" onkeydown="if(event.key==='Enter')mapSearchGo()"/>
             <button class="btn btn-ghost btn-sm" onclick="mapSearchGo()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
               Search
@@ -774,19 +845,13 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           </div>
           <div id="map-search-results"></div>
         </div>
-
-        <!-- Map legend -->
         <div class="map-legend" id="map-legend">
           <div class="map-legend-item"><div class="map-legend-dot" style="background:#1A56DB"></div>Pinned area</div>
           <div class="map-legend-item"><div class="map-legend-dot" style="background:#0D9E6A"></div>Free delivery</div>
           <div class="map-legend-item"><div class="map-legend-dot" style="background:#E02C2C"></div>Chargeable</div>
           <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="pin-count">0 areas pinned</span>
         </div>
-
-        <!-- The map -->
         <div id="delivery-map"></div>
-
-        <!-- Pinned areas list -->
         <div style="margin-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
             <div class="fl" style="font-size:11px">Pinned Delivery Areas</div>
@@ -815,7 +880,7 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
       </div>
       <div class="card">
         <div class="card-head">
-          <div><div class="card-title">Greeting Suggestion Buttons</div><div class="card-sub">Up to 4 random suggestions sent per greeting message</div></div>
+          <div><div class="card-title">Greeting Suggestion Buttons</div><div class="card-sub">Up to 4 random suggestions sent per greeting</div></div>
           <div class="ltabs" id="ltabs" style="margin-bottom:0">
             <div class="ltab active" onclick="switchSugLang('en',this)">🇬🇧 EN</div>
             <div class="ltab" onclick="switchSugLang('ur',this)">🇵🇰 UR</div>
@@ -882,7 +947,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <div class="mtab" id="mt-variants" onclick="switchMTab('variants')">② Sizes & Spice</div>
         <div class="mtab" id="mt-extras" onclick="switchMTab('extras')">③ Extras & Notes</div>
       </div>
-      <!-- Basic -->
       <div class="mtab-panel active" id="mp-basic">
         <input type="hidden" id="pm-id"/>
         <div class="form-grid">
@@ -911,7 +975,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
           <div id="desc-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
         </div>
       </div>
-      <!-- Variants -->
       <div class="mtab-panel" id="mp-variants">
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px" id="variant-hint">Add size variants with prices</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px" id="variant-chips"></div>
@@ -920,7 +983,6 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
         <div style="margin-top:18px;margin-bottom:8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Spice Levels</div>
         <div id="spice-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
-      <!-- Extras -->
       <div class="mtab-panel" id="mp-extras">
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Optional add-ons customers can choose</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px" id="extras-chips"></div>
@@ -952,6 +1014,59 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
     <div class="modal-body" id="od-body"></div>
     <div class="modal-ft">
       <button class="btn btn-ghost btn-sm" onclick="closeOrderDetail()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ RESERVATION MODAL (Create / Edit) ═══════════════ -->
+<div class="modal-bg" id="res-modal" onclick="if(event.target===this)closeResModal()">
+  <div class="modal" style="width:540px">
+    <div class="modal-hd">
+      <div>
+        <div class="modal-title" id="res-modal-title">New Reservation</div>
+        <div class="modal-sub" id="res-modal-sub">POST /api/reservations</div>
+      </div>
+      <button class="modal-close" onclick="closeResModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="res-modal-id"/>
+      <div class="form-grid">
+        <div class="fg"><label class="fl">Customer Name *</label><input class="fi" id="res-modal-name" placeholder="Full name"/></div>
+        <div class="fg"><label class="fl">WhatsApp Number *</label><input class="fi" id="res-modal-user" placeholder="e.g. 923001234567"/></div>
+        <div class="fg"><label class="fl">Date *</label><input class="fi" type="date" id="res-modal-date"/></div>
+        <div class="fg">
+          <label class="fl">Time Slot *</label>
+          <select class="fi" id="res-modal-time">
+            <option value="">Select time…</option>
+            <option>12:00</option><option>12:30</option><option>13:00</option><option>13:30</option>
+            <option>14:00</option><option>14:30</option><option>15:00</option><option>15:30</option>
+            <option>16:00</option><option>16:30</option><option>17:00</option><option>17:30</option>
+            <option>18:00</option><option>18:30</option><option>19:00</option><option>19:30</option>
+            <option>20:00</option><option>20:30</option><option>21:00</option><option>21:30</option>
+            <option>22:00</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Guests *</label><input class="fi" type="number" id="res-modal-guests" min="1" max="20" placeholder="2"/></div>
+        <div class="fg">
+          <label class="fl">Status</label>
+          <select class="fi" id="res-modal-status">
+            <option value="Pending">⏳ Pending</option>
+            <option value="Confirmed">✅ Confirmed</option>
+            <option value="Cancelled">❌ Cancelled</option>
+            <option value="Completed">🎉 Completed</option>
+            <option value="No Show">🚫 No Show</option>
+          </select>
+        </div>
+        <div class="fg full"><label class="fl">Notes (Optional)</label><textarea class="fi" id="res-modal-notes" rows="2" placeholder="e.g. window seat, birthday celebration…"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost btn-sm" onclick="closeResModal()">Cancel</button>
+      <button class="btn btn-danger btn-sm" id="res-modal-delete-btn" style="display:none" onclick="deleteReservation()">Delete</button>
+      <button class="btn btn-primary btn-sm" onclick="saveReservation()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Save Reservation
+      </button>
     </div>
   </div>
 </div>
@@ -999,23 +1114,23 @@ textarea.fi { resize: vertical; min-height: 72px; line-height: 1.5; }
 // ═══════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════
-let allOrders = [], allProducts = [];
+let allOrders = [], allProducts = [], allReservations = [];
 let knownIds = new Set();
-let orderFilter = '';
+let orderFilter = '', resFilter = '', resSearchQ = '', resDateFilter = '';
 let refreshTimer = null;
 let variantRows = [], extrasRows = [], selectedSpice = [];
 let sugData = { greeting: { en:[], ur:[], de:[] } };
 let currentSugLang = 'en';
 let faqData = {};
+let resViewMode = 'table';
 
 // Map state
 let deliveryMap = null;
 let mapTileLayer = null;
-let mapMarkers = [];   // [{latlng, areaName, charge, marker}]
+let mapMarkers = [];
 let pendingMapClick = null;
 let currentEditAreaIdx = null;
 let mapSearchTimer = null;
-const MAP_COLORS = ['#1A56DB','#0D9E6A','#E02C2C','#6D28D9','#C47A00','#0891B2','#BE185D','#7C3AED'];
 
 // ═══════════════════════════════════════════════════
 // LOGIN
@@ -1057,12 +1172,13 @@ function showPage(id, navEl) {
   document.getElementById('page-' + id).classList.add('active');
   if (navEl) navEl.classList.add('active');
   closeSidebar();
-  if (id === 'orders')      renderOrders();
-  if (id === 'products')    renderProducts();
-  if (id === 'botconfig')   loadBotConfig();
-  if (id === 'delivery')    { loadDeliverySettings(); setTimeout(initMap, 200); }
-  if (id === 'suggestions') loadSuggestions();
-  if (id === 'analytics')   loadAnalytics();
+  if (id === 'orders')       renderOrders();
+  if (id === 'reservations') renderReservations();
+  if (id === 'products')     renderProducts();
+  if (id === 'botconfig')    loadBotConfig();
+  if (id === 'delivery')     { loadDeliverySettings(); setTimeout(initMap, 200); }
+  if (id === 'suggestions')  loadSuggestions();
+  if (id === 'analytics')    loadAnalytics();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1078,9 +1194,11 @@ async function fetchData() {
     if (knownIds.size > 0) incoming.forEach(o => { if (!knownIds.has(o._id) && o.status === 'Pending') newPendIds.add(o._id); });
     incoming.forEach(o => knownIds.add(o._id));
     allOrders = incoming;
-    updateDashboard();
+    allReservations = d.reservations || [];
+    updateDashboard(d.reservation_stats || {});
     renderOrders(newPendIds);
     renderProducts();
+    renderReservations();
     const now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     document.getElementById('refresh-lbl').textContent = now;
   } catch(e) { toast('Refresh failed', 'err'); }
@@ -1093,30 +1211,39 @@ function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function fmt(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : n; }
 function timeAgo(iso) {
   if (!iso) return '—';
-  const d = new Date(iso); if (isNaN(d)) return iso.slice(0,10);
+  const d = new Date(iso); if (isNaN(d)) return iso.slice ? iso.slice(0,10) : '—';
   const s = Math.floor((Date.now() - d) / 1000);
   if (s < 60) return s + 's ago';
   if (s < 3600) return Math.floor(s/60) + 'm ago';
   if (s < 86400) return Math.floor(s/3600) + 'h ago';
   return d.toLocaleDateString();
 }
-function statusPill(s) { return `<span class="pill pill-${s}">${s}</span>`; }
+function statusPill(s) {
+  const cls = (s||'').replace(/\s/g,'_');
+  return `<span class="pill pill-${esc(s)}">${esc(s)}</span>`;
+}
 function catEmoji(c) { return { biryani:'🍛', burger:'🍔', pizza:'🍕', karahi:'🫕', rolls:'🌯', rice:'🍚', drinks:'🥤', dessert:'🍮' }[c] || '🍽️'; }
 
 // ═══════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════
-function updateDashboard() {
+function updateDashboard(resStats) {
   const orders = allOrders;
   const pending = orders.filter(o => o.status === 'Pending').length;
   const delivered = orders.filter(o => o.status === 'Delivered').length;
   const revenue = orders.filter(o => o.status === 'Delivered').reduce((s,o) => s + (parseFloat(o.total_price)||0), 0);
-  document.getElementById('d-orders').textContent = orders.length;
-  document.getElementById('d-pending').textContent = pending;
-  document.getElementById('d-delivered').textContent = delivered;
-  document.getElementById('d-revenue').textContent = revenue > 0 ? 'PKR ' + fmt(Math.round(revenue)) : '—';
+  document.getElementById('d-orders').textContent   = orders.length;
+  document.getElementById('d-pending').textContent  = pending;
+  document.getElementById('d-delivered').textContent= delivered;
+  document.getElementById('d-revenue').textContent  = revenue > 0 ? 'PKR ' + fmt(Math.round(revenue)) : '—';
+  document.getElementById('d-res-total').textContent= resStats.total || allReservations.length || 0;
+
   const pb = document.getElementById('pending-badge');
   pb.textContent = pending; pb.style.display = pending > 0 ? 'block' : 'none';
+  const resPendingCount = allReservations.filter(r => r.status === 'Pending').length;
+  const rpb = document.getElementById('res-pending-badge');
+  rpb.textContent = resPendingCount; rpb.style.display = resPendingCount > 0 ? 'block' : 'none';
+
   // Top items
   const ic = {};
   orders.forEach(o => (o.items||[]).forEach(it => { const k = it.title||'?'; ic[k] = (ic[k]||0) + (it.quantity||1); }));
@@ -1124,7 +1251,8 @@ function updateDashboard() {
   document.getElementById('d-top-items').innerHTML = top.length ? top.map(([n,c]) =>
     `<div class="an-bar"><div class="an-bar-row"><span>${esc(n)}</span><span>${c} orders</span></div><div class="an-track"><div class="an-fill" style="width:${Math.round(c/top[0][1]*100)}%;background:var(--accent)"></div></div></div>`
   ).join('') : '<div class="empty"><div class="empty-icon">📊</div><div class="empty-title">No orders yet</div></div>';
-  // Breakdown
+
+  // Order breakdown
   const statuses = ['Pending','Accepted','Processing','Delivered','Rejected'];
   const colors = { Pending:'var(--amber)', Accepted:'var(--accent)', Processing:'var(--purple)', Delivered:'var(--green)', Rejected:'var(--red)' };
   const total = orders.length || 1;
@@ -1132,7 +1260,8 @@ function updateDashboard() {
     const cnt = orders.filter(o => o.status === s).length;
     return `<div class="an-bar"><div class="an-bar-row"><span>${statusPill(s)}</span><span>${cnt} orders</span></div><div class="an-track"><div class="an-fill" style="width:${Math.round(cnt/total*100)}%;background:${colors[s]}"></div></div></div>`;
   }).join('');
-  // Recent table
+
+  // Recent orders table
   const tbody = document.querySelector('#d-tbl tbody');
   tbody.innerHTML = orders.slice(0,10).map(o => {
     const items = o.items || []; const first = items[0];
@@ -1149,6 +1278,17 @@ function updateDashboard() {
       <td style="color:var(--muted);font-size:12px">${timeAgo(o.timestamp)}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted)">No orders yet</td></tr>';
+
+  // Recent reservations table
+  const resTbody = document.querySelector('#d-res-tbl tbody');
+  resTbody.innerHTML = allReservations.slice(0,5).map(r => `<tr>
+    <td class="mono-text">#${esc((r._id||'').slice(-6))}</td>
+    <td style="font-weight:600">${esc(r.name||'—')}</td>
+    <td>${esc(r.date||'—')}</td>
+    <td>${esc(r.time_slot||'—')}</td>
+    <td style="text-align:center">${r.guests||'—'}</td>
+    <td>${statusPill(r.status||'Pending')}</td>
+  </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted)">No reservations yet</td></tr>';
 }
 
 // ═══════════════════════════════════════════════════
@@ -1156,7 +1296,7 @@ function updateDashboard() {
 // ═══════════════════════════════════════════════════
 function setOrderFilter(f, el) {
   orderFilter = f;
-  document.querySelectorAll('.ftab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#page-orders .ftab').forEach(t => t.classList.remove('active'));
   if (el) el.classList.add('active');
   renderOrders();
 }
@@ -1234,19 +1374,16 @@ function openOrderDetail(id) {
   }).join('') : '<div style="color:var(--muted);font-size:13px">No items</div>';
   const statusFlow = buildActionBtnsDetail(id, o.status);
   document.getElementById('od-body').innerHTML = `
-    <div class="od-section">
-      <div class="od-section-title">Order Info</div>
+    <div class="od-section"><div class="od-section-title">Order Info</div>
       <div class="od-row"><div class="od-label">Order ID</div><div class="od-val mono-text">${esc(o._id)}</div></div>
       <div class="od-row"><div class="od-label">Customer</div><div class="od-val mono-text">${esc(o.user_id||'—')}</div></div>
       <div class="od-row"><div class="od-label">Placed</div><div class="od-val">${o.timestamp ? new Date(o.timestamp).toLocaleString() : '—'}</div></div>
     </div>
-    <div class="od-section">
-      <div class="od-section-title">Delivery Info</div>
+    <div class="od-section"><div class="od-section-title">Delivery Info</div>
       <div class="od-row"><div class="od-label">Address</div><div class="od-val">${esc(o.address||'Not provided')}</div></div>
       <div class="od-row"><div class="od-label">Delivery Fee</div><div class="od-val">${o.delivery_charge > 0 ? 'PKR ' + o.delivery_charge : '<span style="color:var(--green);font-weight:600">Free</span>'}</div></div>
     </div>
-    <div class="od-section">
-      <div class="od-section-title">Items (${items.length})</div>
+    <div class="od-section"><div class="od-section-title">Items (${items.length})</div>
       ${itemsHtml}
       <div class="od-total-box"><span style="font-size:13px;font-weight:600;opacity:.85">Grand Total</span><span style="font-family:var(--mono);font-size:18px;font-weight:800">PKR ${o.total_price||0}</span></div>
     </div>
@@ -1263,6 +1400,245 @@ function buildActionBtnsDetail(id, status) {
   return h;
 }
 function closeOrderDetail() { document.getElementById('order-modal').classList.remove('open'); }
+
+// ═══════════════════════════════════════════════════
+// RESERVATIONS
+// ═══════════════════════════════════════════════════
+function setResFilter(f, el) {
+  resFilter = f;
+  document.querySelectorAll('#page-reservations .ftabs .ftab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderReservations();
+}
+
+function filterReservations(q) { resSearchQ = q.toLowerCase(); renderReservations(); }
+function filterReservationsByDate(d) { resDateFilter = d; renderReservations(); }
+
+function getFilteredReservations() {
+  let list = allReservations;
+  if (resFilter)     list = list.filter(r => r.status === resFilter);
+  if (resDateFilter) list = list.filter(r => r.date === resDateFilter);
+  if (resSearchQ)    list = list.filter(r =>
+    (r.name||'').toLowerCase().includes(resSearchQ) ||
+    (r.user_id||'').toLowerCase().includes(resSearchQ) ||
+    (r._id||'').toLowerCase().includes(resSearchQ)
+  );
+  return list;
+}
+
+function renderReservations() {
+  // Update stats
+  const stats = {};
+  allReservations.forEach(r => { stats[r.status] = (stats[r.status]||0) + 1; });
+  document.getElementById('rs-total').textContent   = allReservations.length;
+  document.getElementById('rs-pending').textContent = stats['Pending']||0;
+  document.getElementById('rs-confirmed').textContent = stats['Confirmed']||0;
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('rs-today').textContent   = allReservations.filter(r => r.date === today).length;
+
+  const filtered = getFilteredReservations();
+  renderResTable(filtered);
+  renderResCards(filtered);
+}
+
+function resCssClass(status) {
+  return { 'Pending':'is-pending','Confirmed':'is-confirmed','Cancelled':'is-cancelled','Completed':'is-completed' }[status] || '';
+}
+
+function renderResTable(list) {
+  const tbody = document.getElementById('res-tbl-body');
+  if (!tbody) return;
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">
+      <div style="font-size:28px;margin-bottom:8px;opacity:.4">🪑</div>No reservations found</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = list.map(r => {
+    const id = r._id || '';
+    const notes = r.notes ? `<span title="${esc(r.notes)}" style="cursor:help;color:var(--muted)">📝 ${esc((r.notes||'').slice(0,20))}${r.notes.length>20?'…':''}</span>` : '<span style="color:var(--border)">—</span>';
+    return `<tr>
+      <td class="mono-text">#${esc(id.slice(-6))}</td>
+      <td><span style="font-weight:600">${esc(r.name||'—')}</span></td>
+      <td class="mono-text">${esc((r.user_id||'').slice(-12))}</td>
+      <td style="font-weight:600">${esc(r.date||'—')}</td>
+      <td>${esc(r.time_slot||'—')}</td>
+      <td style="text-align:center;font-weight:600">${r.guests||'—'}</td>
+      <td>${notes}</td>
+      <td>${statusPill(r.status||'Pending')}</td>
+      <td style="color:var(--muted);font-size:11px">${timeAgo(r.created_at)}</td>
+      <td>
+        <div style="display:flex;gap:5px;align-items:center">
+          ${buildResActionBtns(id, r.status)}
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="openEditResModal('${id}')" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="confirmDeleteRes('${id}')" title="Delete">🗑️</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderResCards(list) {
+  const grid = document.getElementById('reservations-grid');
+  if (!grid) return;
+  if (!list.length) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">🪑</div><div class="empty-title">No reservations found</div></div>`;
+    return;
+  }
+  grid.innerHTML = list.map(r => {
+    const id = r._id || '';
+    return `<div class="res-card ${resCssClass(r.status)}">
+      <div class="rc-top">
+        <div>
+          <div class="rc-id">#${esc(id.slice(-6))} · ${timeAgo(r.created_at)}</div>
+          <div class="rc-name">${esc(r.name||'—')}</div>
+          <div class="rc-phone">${esc((r.user_id||'').slice(-12))}</div>
+        </div>
+        ${statusPill(r.status||'Pending')}
+      </div>
+      <div class="rc-details">
+        <div class="rc-detail"><div class="rc-detail-label">📅 Date</div><div class="rc-detail-val">${esc(r.date||'—')}</div></div>
+        <div class="rc-detail"><div class="rc-detail-label">🕐 Time</div><div class="rc-detail-val">${esc(r.time_slot||'—')}</div></div>
+        <div class="rc-detail"><div class="rc-detail-label">👥 Guests</div><div class="rc-detail-val">${r.guests||'—'}</div></div>
+        <div class="rc-detail"><div class="rc-detail-label">🔖 Ref</div><div class="rc-detail-val mono-text" style="font-size:11px">#${esc(id.slice(-6))}</div></div>
+      </div>
+      ${r.notes ? `<div class="rc-notes">📝 ${esc(r.notes)}</div>` : ''}
+      <div class="rc-actions">
+        ${buildResActionBtns(id, r.status)}
+        <button class="btn btn-ghost btn-sm" onclick="openEditResModal('${id}')">✏️ Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="confirmDeleteRes('${id}')">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function buildResActionBtns(id, status) {
+  const b = (label, s, cls) => `<button class="btn btn-sm ${cls}" onclick="updateResStatus('${id}','${s}')">${label}</button>`;
+  let h = '';
+  if (status === 'Pending')   h += b('✅ Confirm','Confirmed','btn-green') + b('❌ Cancel','Cancelled','btn-danger');
+  if (status === 'Confirmed') h += b('🎉 Complete','Completed','btn-teal') + b('🚫 No Show','No Show','btn-amber');
+  return h;
+}
+
+async function updateResStatus(id, status) {
+  try {
+    const r = await fetch(`/api/reservations/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    const d = await r.json();
+    if (r.ok) { toast(d.message || 'Reservation updated'); await fetchData(); }
+    else toast(d.message || 'Update failed', 'err');
+  } catch { toast('Update failed', 'err'); }
+}
+
+function toggleResView(mode) {
+  resViewMode = mode;
+  document.getElementById('res-table-view').style.display = mode === 'table' ? 'block' : 'none';
+  document.getElementById('res-card-view').style.display  = mode === 'card'  ? 'block' : 'none';
+  document.getElementById('view-table-btn').style.cssText = mode === 'table' ? 'background:var(--accent-bg);color:var(--accent);border-color:var(--accent)' : '';
+  document.getElementById('view-card-btn').style.cssText  = mode === 'card'  ? 'background:var(--accent-bg);color:var(--accent);border-color:var(--accent)' : '';
+}
+
+// ── Reservation CRUD ────────────────────────────
+function openCreateReservationModal() {
+  document.getElementById('res-modal-title').textContent = 'New Reservation';
+  document.getElementById('res-modal-sub').textContent   = 'POST /api/reservations';
+  document.getElementById('res-modal-id').value    = '';
+  document.getElementById('res-modal-name').value  = '';
+  document.getElementById('res-modal-user').value  = '';
+  document.getElementById('res-modal-date').value  = '';
+  document.getElementById('res-modal-time').value  = '';
+  document.getElementById('res-modal-guests').value= '';
+  document.getElementById('res-modal-notes').value = '';
+  document.getElementById('res-modal-status').value= 'Pending';
+  document.getElementById('res-modal-delete-btn').style.display = 'none';
+  document.getElementById('res-modal').classList.add('open');
+}
+
+function openEditResModal(id) {
+  const r = allReservations.find(x => x._id === id);
+  if (!r) return;
+  document.getElementById('res-modal-title').textContent = 'Edit Reservation';
+  document.getElementById('res-modal-sub').textContent   = `PUT /api/reservations/${id}`;
+  document.getElementById('res-modal-id').value    = id;
+  document.getElementById('res-modal-name').value  = r.name||'';
+  document.getElementById('res-modal-user').value  = r.user_id||'';
+  document.getElementById('res-modal-date').value  = r.date||'';
+  document.getElementById('res-modal-time').value  = r.time_slot||'';
+  document.getElementById('res-modal-guests').value= r.guests||'';
+  document.getElementById('res-modal-notes').value = r.notes||'';
+  document.getElementById('res-modal-status').value= r.status||'Pending';
+  document.getElementById('res-modal-delete-btn').style.display = 'inline-flex';
+  document.getElementById('res-modal').classList.add('open');
+}
+
+function closeResModal() { document.getElementById('res-modal').classList.remove('open'); }
+
+async function saveReservation() {
+  const id      = document.getElementById('res-modal-id').value;
+  const name    = document.getElementById('res-modal-name').value.trim();
+  const user_id = document.getElementById('res-modal-user').value.trim();
+  const date    = document.getElementById('res-modal-date').value;
+  const time_slot = document.getElementById('res-modal-time').value;
+  const guests  = parseInt(document.getElementById('res-modal-guests').value)||0;
+  const notes   = document.getElementById('res-modal-notes').value.trim();
+  const status  = document.getElementById('res-modal-status').value;
+
+  if (!name || !user_id || !date || !time_slot || !guests) {
+    toast('Please fill in all required fields', 'err'); return;
+  }
+
+  const payload = { name, user_id, date, time_slot, guests, notes, status };
+
+  try {
+    let r, d;
+    if (id) {
+      // Update — PUT /api/reservations/:id
+      r = await fetch(`/api/reservations/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      // Create — POST /api/reservations
+      r = await fetch('/api/reservations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+    d = await r.json();
+    if (r.ok) {
+      toast(d.message || (id ? 'Reservation updated!' : 'Reservation created!'));
+      closeResModal();
+      await fetchData();
+    } else {
+      toast(d.message || 'Save failed', 'err');
+    }
+  } catch { toast('Save failed', 'err'); }
+}
+
+async function confirmDeleteRes(id) {
+  if (!confirm('Permanently delete this reservation? This cannot be undone.')) return;
+  await doDeleteRes(id);
+}
+
+async function deleteReservation() {
+  const id = document.getElementById('res-modal-id').value;
+  if (!id || !confirm('Permanently delete this reservation?')) return;
+  closeResModal();
+  await doDeleteRes(id);
+}
+
+async function doDeleteRes(id) {
+  try {
+    const r = await fetch(`/api/reservations/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (r.ok) { toast(d.message || 'Reservation deleted'); await fetchData(); }
+    else toast(d.message || 'Delete failed', 'err');
+  } catch { toast('Delete failed', 'err'); }
+}
 
 // ═══════════════════════════════════════════════════
 // PRODUCTS
@@ -1488,10 +1864,8 @@ async function loadDeliverySettings() {
     document.getElementById('dc-flat').value = dch.flat_charge || 0;
     document.getElementById('dc-free-above').value = dch.free_above || 0;
     document.getElementById('dc-free-keywords').value = (dch.free_keywords||[]).join(', ');
-    // Load per_area into map markers
     const perArea = dch.per_area || {};
     if (Object.keys(perArea).length > 0 && mapMarkers.length === 0) {
-      // Geocode and add existing areas to map
       for (const [areaName, charge] of Object.entries(perArea)) {
         await geocodeAndAddArea(areaName, parseFloat(charge)||0, false);
       }
@@ -1507,17 +1881,13 @@ async function saveDeliverySettings() {
   const flat = parseFloat(document.getElementById('dc-flat').value) || 0;
   const freeAbove = parseFloat(document.getElementById('dc-free-above').value) || 0;
   const freeKw = document.getElementById('dc-free-keywords').value.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
-
-  // Build per_area from map markers
   const perArea = {};
   mapMarkers.forEach(m => { if (m.areaName) perArea[m.areaName.toLowerCase().trim()] = m.charge; });
-
   try {
-    const [r1, r2] = await Promise.all([
+    await Promise.all([
       fetch('/api/delivery-time', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ delivery_time: dtDefault, delivery_time_exceptions: dtExceptions }) }),
       fetch('/api/delivery-charges', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ flat_charge:flat, free_above:freeAbove, per_area:perArea, free_keywords:freeKw }) }),
     ]);
-    const d1 = await r1.json(), d2 = await r2.json();
     toast('Delivery settings saved! ✅');
   } catch { toast('Save failed','err'); }
 }
@@ -1538,16 +1908,9 @@ const TILE_ATTRS = {
 
 function initMap() {
   if (deliveryMap) { deliveryMap.invalidateSize(); return; }
-
-  // Default to Karachi
   deliveryMap = L.map('delivery-map', { zoomControl: true, scrollWheelZoom: true }).setView([24.8607, 67.0011], 12);
-
   mapTileLayer = L.tileLayer(TILE_LAYERS.streets, { attribution: TILE_ATTRS.streets, maxZoom: 19 }).addTo(deliveryMap);
-
-  deliveryMap.on('click', function(e) {
-    openAreaModalForPin(e.latlng, null);
-  });
-
+  deliveryMap.on('click', function(e) { openAreaModalForPin(e.latlng, null); });
   deliveryMap.invalidateSize();
 }
 
@@ -1566,7 +1929,7 @@ function getMarkerColor(charge) {
   return '#1A56DB';
 }
 
-function createMarkerIcon(charge, idx) {
+function createMarkerIcon(charge) {
   const color = getMarkerColor(charge);
   const label = charge === 0 ? 'FREE' : `PKR ${charge}`;
   return L.divIcon({
@@ -1580,26 +1943,14 @@ function addMapMarker(latlng, areaName, charge, zoomTo=false) {
   const icon = createMarkerIcon(charge);
   const marker = L.marker(latlng, { icon, draggable: true }).addTo(deliveryMap);
   const idx = mapMarkers.length;
-
   const chargeLabel = charge === 0 ? '<span style="color:#0D9E6A;font-weight:700">Free Delivery</span>' : `<span style="color:#E02C2C;font-weight:700">PKR ${charge}</span>`;
-  marker.bindPopup(`
-    <div class="marker-popup">
-      <b>📍 ${areaName || 'Unnamed Area'}</b><br/>
-      Delivery: ${chargeLabel}<br/>
-      <br/>
-      <button onclick="editMapAreaByIdx(${idx})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button>
-      <button onclick="removeMapMarkerByIdx(${idx})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button>
-    </div>
-  `);
-
+  marker.bindPopup(`<div class="marker-popup"><b>📍 ${areaName || 'Unnamed Area'}</b><br/>Delivery: ${chargeLabel}<br/><br/><button onclick="editMapAreaByIdx(${idx})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button><button onclick="removeMapMarkerByIdx(${idx})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button></div>`);
   marker.on('dragend', function(e) {
     const m = mapMarkers[idx];
     if (m) { m.latlng = e.target.getLatLng(); reverseGeocode(e.target.getLatLng(), idx); }
   });
-
   const markerData = { latlng, areaName, charge, marker };
   mapMarkers.push(markerData);
-
   if (zoomTo) deliveryMap.setView(latlng, 14);
   renderMapAreaList();
   updatePinCount();
@@ -1610,7 +1961,6 @@ function removeMapMarkerByIdx(idx) {
   if (mapMarkers[idx]) { deliveryMap.removeLayer(mapMarkers[idx].marker); mapMarkers.splice(idx, 1); }
   renderMapAreaList();
   updatePinCount();
-  // Rebuild popup button indices
   mapMarkers.forEach((m, i) => {
     m.marker.setPopupContent(`<div class="marker-popup"><b>📍 ${m.areaName || 'Area'}</b><br/>Delivery: ${m.charge === 0 ? '<span style="color:#0D9E6A;font-weight:700">Free</span>' : `<span style="color:#E02C2C;font-weight:700">PKR ${m.charge}</span>`}<br/><br/><button onclick="editMapAreaByIdx(${i})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button><button onclick="removeMapMarkerByIdx(${i})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button></div>`);
   });
@@ -1618,8 +1968,7 @@ function removeMapMarkerByIdx(idx) {
 
 function editMapAreaByIdx(idx) {
   deliveryMap.closePopup();
-  const m = mapMarkers[idx];
-  if (!m) return;
+  const m = mapMarkers[idx]; if (!m) return;
   currentEditAreaIdx = idx;
   document.getElementById('area-modal-name').textContent = `Editing: ${m.areaName || 'Area'}`;
   document.getElementById('area-modal-area').value = m.areaName || '';
@@ -1635,7 +1984,6 @@ function openAreaModalForPin(latlng, existingName) {
   document.getElementById('area-modal-area').value = existingName || '';
   document.getElementById('area-modal-charge').value = '';
   document.getElementById('area-modal-delete').style.display = 'none';
-  // Reverse geocode for name suggestion
   if (latlng) reverseGeocodeForModal(latlng);
   document.getElementById('area-modal').classList.add('open');
 }
@@ -1671,41 +2019,21 @@ function saveAreaModal() {
   const charge   = parseFloat(document.getElementById('area-modal-charge').value) || 0;
   if (!areaName) { toast('Please enter an area name', 'err'); return; }
   if (currentEditAreaIdx !== null && mapMarkers[currentEditAreaIdx]) {
-    // Editing existing
     const m = mapMarkers[currentEditAreaIdx];
-    m.areaName = areaName;
-    m.charge   = charge;
+    m.areaName = areaName; m.charge = charge;
     m.marker.setIcon(createMarkerIcon(charge));
     m.marker.setPopupContent(`<div class="marker-popup"><b>📍 ${areaName}</b><br/>Delivery: ${charge === 0 ? '<span style="color:#0D9E6A;font-weight:700">Free</span>' : `<span style="color:#E02C2C;font-weight:700">PKR ${charge}</span>`}<br/><br/><button onclick="editMapAreaByIdx(${currentEditAreaIdx})" style="background:#1A56DB;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;margin-right:4px">✏️ Edit</button><button onclick="removeMapMarkerByIdx(${currentEditAreaIdx})" style="background:#E02C2C;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">🗑️ Remove</button></div>`);
   } else if (pendingMapClick) {
-    // New marker from map click
     addMapMarker(pendingMapClick, areaName, charge, false);
   }
-  pendingMapClick = null;
-  currentEditAreaIdx = null;
-  closeAreaModal();
-  renderMapAreaList();
-  updatePinCount();
+  pendingMapClick = null; currentEditAreaIdx = null;
+  closeAreaModal(); renderMapAreaList(); updatePinCount();
   toast(`Area "${areaName}" saved`);
 }
 
-function deleteMapArea() {
-  if (currentEditAreaIdx !== null) removeMapMarkerByIdx(currentEditAreaIdx);
-  closeAreaModal();
-  toast('Area removed');
-}
-
+function deleteMapArea() { if (currentEditAreaIdx !== null) removeMapMarkerByIdx(currentEditAreaIdx); closeAreaModal(); toast('Area removed'); }
 function closeAreaModal() { document.getElementById('area-modal').classList.remove('open'); pendingMapClick = null; }
-
-function clearMapMarkers() {
-  if (!confirm('Remove all pinned areas?')) return;
-  mapMarkers.forEach(m => { if (m.marker) deliveryMap.removeLayer(m.marker); });
-  mapMarkers = [];
-  renderMapAreaList();
-  updatePinCount();
-  toast('All areas cleared');
-}
-
+function clearMapMarkers() { if (!confirm('Remove all pinned areas?')) return; mapMarkers.forEach(m => { if (m.marker) deliveryMap.removeLayer(m.marker); }); mapMarkers = []; renderMapAreaList(); updatePinCount(); toast('All areas cleared'); }
 function updatePinCount() { document.getElementById('pin-count').textContent = `${mapMarkers.length} area${mapMarkers.length!==1?'s':''} pinned`; }
 
 function renderMapAreaList() {
@@ -1725,26 +2053,14 @@ function renderMapAreaList() {
   }).join('');
 }
 
-function applyMapAreasToForm() {
-  // Map markers → per_area object is built at save time, just confirm sync
-  const count = mapMarkers.length;
-  if (count === 0) { toast('No areas pinned yet', 'err'); return; }
-  toast(`${count} area${count!==1?'s':''} will be saved as per-area charges ✅`);
-}
+function applyMapAreasToForm() { const count = mapMarkers.length; if (count === 0) { toast('No areas pinned yet', 'err'); return; } toast(`${count} area${count!==1?'s':''} will be saved as per-area charges ✅`); }
+function addAreaManually() { if (!deliveryMap) { toast('Map not loaded yet', 'err'); return; } const center = deliveryMap.getCenter(); openAreaModalForPin(center, ''); }
 
-function addAreaManually() {
-  if (!deliveryMap) { toast('Map not loaded yet', 'err'); return; }
-  const center = deliveryMap.getCenter();
-  openAreaModalForPin(center, '');
-}
-
-// ─── Map Search ───────────────────────────────────
 function debounceMapSearch(val) {
   clearTimeout(mapSearchTimer);
   if (!val || val.length < 3) { document.getElementById('map-search-results').style.display = 'none'; return; }
   mapSearchTimer = setTimeout(() => nominatimSearch(val), 400);
 }
-
 async function nominatimSearch(q) {
   try {
     const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&accept-language=en&countrycodes=pk`, { headers:{'Accept-Language':'en'} });
@@ -1755,39 +2071,26 @@ async function nominatimSearch(q) {
     el.style.display = 'block';
   } catch { document.getElementById('map-search-results').style.display = 'none'; }
 }
-
-async function mapSearchGo() {
-  const q = document.getElementById('map-search-input').value.trim();
-  if (!q) return;
-  await nominatimSearch(q);
-}
-
+async function mapSearchGo() { const q = document.getElementById('map-search-input').value.trim(); if (!q) return; await nominatimSearch(q); }
 function selectMapResult(lat, lon, displayName) {
   document.getElementById('map-search-results').style.display = 'none';
   document.getElementById('map-search-input').value = '';
   const latlng = L.latLng(parseFloat(lat), parseFloat(lon));
   if (deliveryMap) deliveryMap.setView(latlng, 14);
-  // Extract short name
   const parts = displayName.split(',').map(s=>s.trim());
   const shortName = parts.slice(0,2).join(', ');
   openAreaModalForPin(latlng, shortName);
 }
-
 async function geocodeAndAddArea(areaName, charge, zoomTo=false) {
   try {
     const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(areaName + ' Karachi')}&limit=1`, { headers:{'Accept-Language':'en'} });
     const d = await r.json();
-    if (d.length) {
-      const latlng = L.latLng(parseFloat(d[0].lat), parseFloat(d[0].lon));
-      if (deliveryMap) addMapMarker(latlng, areaName, charge, zoomTo);
-    }
+    if (d.length) { const latlng = L.latLng(parseFloat(d[0].lat), parseFloat(d[0].lon)); if (deliveryMap) addMapMarker(latlng, areaName, charge, zoomTo); }
   } catch {}
 }
-
-// Close search results on outside click
 document.addEventListener('click', function(e) {
   if (!e.target.closest('#map-search-results') && !e.target.closest('.map-search-bar')) {
-    document.getElementById('map-search-results').style.display = 'none';
+    const el = document.getElementById('map-search-results'); if (el) el.style.display = 'none';
   }
 });
 
@@ -1795,9 +2098,9 @@ document.addEventListener('click', function(e) {
 // SMART SUGGESTIONS
 // ═══════════════════════════════════════════════════
 const SUG_PRESETS = {
-  en: ['Show Menu 🍽️',"Today's Deals 🔥",'Order Biryani 🍛','Order Burger 🍔','Delivery Info 🚗','Check My Order 📦','Contact Us 📞','Best Sellers ⭐'],
-  ur: ['مینو دیکھیں 🍽️','آج کے آفر 🔥','بریانی آرڈر کریں 🍛','برگر آرڈر کریں 🍔','ڈیلیوری معلومات 🚗','میرا آرڈر 📦'],
-  de: ['Menü anzeigen 🍽️','Heutige Angebote 🔥','Biryani bestellen 🍛','Burger bestellen 🍔','Lieferinfo 🚗','Meine Bestellung 📦'],
+  en: ['Show Menu 🍽️',"Today's Deals 🔥",'Order Biryani 🍛','Order Burger 🍔','Delivery Info 🚗','Check My Order 📦','Contact Us 📞','Best Sellers ⭐','Book a Table 🪑'],
+  ur: ['مینو دیکھیں 🍽️','آج کے آفر 🔥','بریانی آرڈر کریں 🍛','برگر آرڈر کریں 🍔','ڈیلیوری معلومات 🚗','میرا آرڈر 📦','میز بک کریں 🪑'],
+  de: ['Menü anzeigen 🍽️','Heutige Angebote 🔥','Biryani bestellen 🍛','Burger bestellen 🍔','Lieferinfo 🚗','Meine Bestellung 📦','Tisch reservieren 🪑'],
 };
 
 async function loadSuggestions() {
@@ -1810,7 +2113,6 @@ async function loadSuggestions() {
     renderSugPresets(currentSugLang);
   } catch { toast('Failed to load suggestions','err'); }
 }
-
 function switchSugLang(lang, el) {
   currentSugLang = lang;
   document.querySelectorAll('#ltabs .ltab').forEach(t => t.classList.remove('active'));
@@ -1818,7 +2120,6 @@ function switchSugLang(lang, el) {
   ['en','ur','de'].forEach(l => { const p = document.getElementById('sug-panel-'+l); if (p) p.style.display = l===lang ? 'block' : 'none'; });
   renderSugPresets(lang);
 }
-
 function renderSugList(lang) {
   const el = document.getElementById('sug-list-'+lang);
   if (!el) return;
@@ -1827,18 +2128,15 @@ function renderSugList(lang) {
     ? items.map((s,i) => `<div class="sug-row"><input class="fi" value="${esc(s)}" oninput="sugData.greeting['${lang}'][${i}]=this.value" placeholder="Suggestion text…"/><button class="btn btn-danger btn-sm btn-icon" onclick="removeSugRow('${lang}',${i})">×</button></div>`).join('')
     : `<div style="font-size:12px;color:var(--muted);padding:8px 0">No suggestions. Add below or use presets.</div>`;
 }
-
 function renderSugPresets(lang) {
   const el = document.getElementById('sug-presets');
   if (!el) return;
   const existing = (sugData.greeting && sugData.greeting[lang]) || [];
   el.innerHTML = (SUG_PRESETS[lang]||[]).filter(p => !existing.includes(p)).map(p => `<span class="chip" onclick="addSugPreset('${lang}','${p.replace(/'/g,"\\'")}')">${esc(p)}</span>`).join('') || '<span style="font-size:12px;color:var(--muted)">All presets added</span>';
 }
-
 function addSugRow(lang) { if (!sugData.greeting[lang]) sugData.greeting[lang] = []; sugData.greeting[lang].push(''); renderSugList(lang); }
 function addSugPreset(lang, text) { if (!sugData.greeting[lang]) sugData.greeting[lang] = []; if (!sugData.greeting[lang].includes(text)) { sugData.greeting[lang].push(text); renderSugList(lang); renderSugPresets(lang); } }
 function removeSugRow(lang, i) { sugData.greeting[lang].splice(i,1); renderSugList(lang); renderSugPresets(lang); }
-
 async function saveSuggestions() {
   const payload = { greeting: {} };
   ['en','ur','de'].forEach(l => { payload.greeting[l] = (sugData.greeting[l]||[]).filter(s => s.trim()); });
