@@ -1,3 +1,11 @@
+"""
+whatsapp.py — WhatsApp API helpers, smart fallback (Claude AI), bot flow helpers
+"""
+
+import re
+import logging
+from typing import Dict, List, Any, Optional
+
 import httpx
 
 import config
