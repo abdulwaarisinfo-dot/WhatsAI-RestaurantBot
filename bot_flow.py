@@ -1,6 +1,7 @@
 """
 bot_flow.py — Core order flow handlers: single-item, multi-item, queue advance,
-              finalise, handle_full_price_display
+              finalise, handle_full_price_display, and Table Reservation flow
+WhatsApp AI Restaurant Bot v14.7 + Table Reservations
 """
 
 import re
@@ -11,10 +12,16 @@ import config
 from database import (
     calculate_delivery_charge, _delivery_charge_info_text,
     create_order_from_cart, get_delivery_time, _track,
+    create_reservation, get_reservations_by_user,
+    cancel_reservation_by_user, get_latest_active_reservation,
+    check_slot_availability,
 )
 from sessions import (
     get_user_session, reset_cart_only, update_preferences,
     _is_same_address_request, _is_valid_address, extract_address,
+    reset_reservation_flow,
+    parse_reservation_date, parse_reservation_time, parse_guest_count,
+    is_reservation_date_valid, format_reservation_summary,
 )
 from products import (
     _recalc_cart, _build_cart_summary, build_cart_item,
@@ -27,9 +34,12 @@ from products import (
 from whatsapp import (
     send_whatsapp_text, send_whatsapp_buttons,
     _ask_size, _ask_spice, _ask_extras, _ask_multi_spice,
+    _ask_reservation_name, _ask_reservation_date, _ask_reservation_time,
+    _ask_reservation_guests, _ask_reservation_notes, _ask_reservation_confirm,
+    send_reservation_confirmed,
 )
 
-logger = logging.getLogger("RestaurantBot.v14.6")
+logger = logging.getLogger("RestaurantBot.v14.7")
 
 
 # ============================================================
@@ -411,3 +421,287 @@ async def handle_multi_item_order(from_number: str, text: str, lang: str) -> boo
         return True
 
     return False
+
+
+# ============================================================
+# TABLE RESERVATION FLOW
+# ============================================================
+
+async def handle_reservation_start(from_number: str, session: Dict, lang: str):
+    """
+    Kick off the reservation flow:
+    reset any in-progress reservation, set step, ask for name.
+    """
+    reset_reservation_flow(session)
+    session["step"] = config.STEP_RESERVATION_NAME
+    await _ask_reservation_name(from_number, lang)
+
+
+async def handle_reservation_flow(from_number: str, msg_text: str, lang: str, session: Dict) -> bool:
+    """
+    Central dispatcher for all reservation steps (steps -1 through -6).
+    Returns True if the message was consumed by the reservation flow.
+    """
+    step = session.get("step", 0)
+
+    # ── STEP -1: collect name ──────────────────────────────────
+    if step == config.STEP_RESERVATION_NAME:
+        name = msg_text.strip()
+        if len(name) < 2:
+            err = {
+                "en": "Please enter your full name (at least 2 characters).",
+                "ur": "براہ کرم اپنا پورا نام لکھیں (کم از کم 2 حروف)۔",
+                "de": "Bitte geben Sie Ihren vollständigen Namen ein (mindestens 2 Zeichen).",
+            }
+            await send_whatsapp_text(from_number, err.get(lang, err["en"]))
+            return True
+
+        session["pending_reservation"]["name"] = name.title()
+        session["step"] = config.STEP_RESERVATION_DATE
+        await _ask_reservation_date(from_number, lang)
+        return True
+
+    # ── STEP -2: collect date ──────────────────────────────────
+    if step == config.STEP_RESERVATION_DATE:
+        date_str = parse_reservation_date(msg_text)
+        if not date_str:
+            err = {
+                "en": "I couldn't understand that date 🤔\nPlease try: *tomorrow*, *25 May*, or *2026-05-25*",
+                "ur": "تاریخ سمجھ نہیں آئی۔ کوشش کریں: *کل*, *25 مئی*, یا *2026-05-25*",
+                "de": "Datum nicht erkannt 🤔\nBitte versuchen: *morgen*, *25. Mai*, oder *2026-05-25*",
+            }
+            await send_whatsapp_text(from_number, err.get(lang, err["en"]))
+            return True
+
+        if not is_reservation_date_valid(date_str):
+            err = {
+                "en": "⚠️ That date has already passed! Please choose today or a future date.",
+                "ur": "⚠️ یہ تاریخ گزر چکی ہے! آج یا آنے والی تاریخ منتخب کریں۔",
+                "de": "⚠️ Dieses Datum liegt in der Vergangenheit! Bitte wählen Sie heute oder ein zukünftiges Datum.",
+            }
+            await send_whatsapp_text(from_number, err.get(lang, err["en"]))
+            return True
+
+        session["pending_reservation"]["date"] = date_str
+        session["step"] = config.STEP_RESERVATION_TIME
+        await _ask_reservation_time(from_number, lang)
+        return True
+
+    # ── STEP -3: collect time ──────────────────────────────────
+    if step == config.STEP_RESERVATION_TIME:
+        time_str = parse_reservation_time(msg_text)
+        if not time_str:
+            err = {
+                "en": "I didn't catch that time 🤔\nPlease try: *7pm*, *19:00*, or *7:30 pm*",
+                "ur": "وقت سمجھ نہیں آیا۔ کوشش کریں: *7pm*, *19:00*",
+                "de": "Uhrzeit nicht erkannt 🤔\nBitte versuchen: *19:00*, *7pm*",
+            }
+            await send_whatsapp_text(from_number, err.get(lang, err["en"]))
+            return True
+
+        # Check slot availability
+        date_str = session["pending_reservation"].get("date", "")
+        if not check_slot_availability(date_str, time_str):
+            err = {
+                "en": (
+                    f"⚠️ Sorry, the *{time_str}* slot on *{date_str}* is fully booked.\n\n"
+                    f"Please choose a different time:"
+                ),
+                "ur": f"⚠️ معذرت، *{date_str}* کو *{time_str}* کا وقت بھرا ہوا ہے۔ دوسرا وقت چنیں:",
+                "de": f"⚠️ Der Slot *{time_str}* am *{date_str}* ist leider ausgebucht.\n\nBitte wählen Sie eine andere Uhrzeit:",
+            }
+            await send_whatsapp_text(from_number, err.get(lang, err["en"]))
+            return True
+
+        session["pending_reservation"]["time_slot"] = time_str
+        session["step"] = config.STEP_RESERVATION_GUESTS
+        await _ask_reservation_guests(from_number, lang)
+        return True
+
+    # ── STEP -4: collect guest count ──────────────────────────
+    if step == config.STEP_RESERVATION_GUESTS:
+        guests = parse_guest_count(msg_text)
+        if not guests:
+            err = {
+                "en": f"Please enter a number of guests between 1 and {config.RESERVATION_MAX_GUESTS}.",
+                "ur": f"براہ کرم 1 سے {config.RESERVATION_MAX_GUESTS} کے درمیان نمبر لکھیں۔",
+                "de": f"Bitte eine Zahl zwischen 1 und {config.RESERVATION_MAX_GUESTS} eingeben.",
+            }
+            await send_whatsapp_text(from_number, err.get(lang, err["en"]))
+            return True
+
+        session["pending_reservation"]["guests"] = guests
+        session["step"] = config.STEP_RESERVATION_NOTES
+        await _ask_reservation_notes(from_number, lang)
+        return True
+
+    # ── STEP -5: collect notes (optional) ─────────────────────
+    if step == config.STEP_RESERVATION_NOTES:
+        skip_words = {"no", "skip", "none", "nothing", "nahi", "nope", "nein", "nahin", "—", "-"}
+        notes_text = msg_text.strip()
+        if notes_text.lower() in skip_words:
+            notes_text = ""
+        session["pending_reservation"]["notes"] = notes_text
+        session["step"] = config.STEP_RESERVATION_CONFIRM
+        await _ask_reservation_confirm(from_number, session["pending_reservation"], lang)
+        return True
+
+    # ── STEP -6: confirm or edit ───────────────────────────────
+    if step == config.STEP_RESERVATION_CONFIRM:
+        q = msg_text.lower().strip()
+
+        # Confirmed
+        if any(kw in q for kw in ["confirm", "yes", "ok", "okay", "haan", "bilkul",
+                                    "zaroor", "sure", "proceed", "✅", "booking",
+                                    "confirm booking", "ji", "theek"]):
+            pr = session["pending_reservation"]
+            reservation_id = create_reservation(
+                user_id   = from_number,
+                name      = pr.get("name", ""),
+                date      = pr.get("date", ""),
+                time_slot = pr.get("time_slot", ""),
+                guests    = pr.get("guests", 1),
+                notes     = pr.get("notes", ""),
+            )
+
+            if reservation_id == "db_error":
+                db_err = {
+                    "en": "⚠️ Something went wrong saving your reservation. Please try again!",
+                    "ur": "⚠️ ریزرویشن محفوظ کرنے میں مسئلہ ہوا۔ دوبارہ کوشش کریں!",
+                    "de": "⚠️ Fehler beim Speichern. Bitte erneut versuchen!",
+                }
+                await send_whatsapp_text(from_number, db_err.get(lang, db_err["en"]))
+                reset_reservation_flow(session)
+                return True
+
+            session["reservation_count"] = session.get("reservation_count", 0) + 1
+            await send_reservation_confirmed(from_number, reservation_id, pr, lang)
+            reset_reservation_flow(session)
+            return True
+
+        # Edit — restart flow but preserve name if possible
+        if any(kw in q for kw in ["edit", "change", "modify", "update", "✏️", "no",
+                                    "nahi", "nein", "start over", "restart"]):
+            session["step"] = config.STEP_RESERVATION_NAME
+            edit_msg = {
+                "en": "No problem! Let's start over. What name should the reservation be under?",
+                "ur": "ٹھیک ہے! دوبارہ شروع کرتے ہیں۔ ریزرویشن کس نام پر ہو؟",
+                "de": "Kein Problem! Fangen wir von vorne an. Auf welchen Namen?",
+            }
+            await send_whatsapp_text(from_number, edit_msg.get(lang, edit_msg["en"]))
+            return True
+
+        # Cancel flow
+        if any(kw in q for kw in ["cancel", "❌", "band karo", "nahi chahiye"]):
+            reset_reservation_flow(session)
+            cancel_msg = {
+                "en": "Reservation cancelled — no problem at all! 😊\nFeel free to book a table anytime.",
+                "ur": "ریزرویشن منسوخ! جب چاہیں دوبارہ بک کریں۔ 😊",
+                "de": "Reservierung abgebrochen. Kein Problem! 😊",
+            }
+            await send_whatsapp_buttons(
+                from_number,
+                cancel_msg.get(lang, cancel_msg["en"]),
+                ["🪑 Book A Table", "View Menu 📋", "Place Order 🛒"],
+            )
+            return True
+
+        # Unrecognised — re-show confirmation
+        await _ask_reservation_confirm(from_number, session["pending_reservation"], lang)
+        return True
+
+    return False
+
+
+async def handle_my_reservations(from_number: str, msg_text: str, lang: str, session: Dict):
+    """
+    Show the user's active reservations and let them cancel one.
+    Triggered by 'my reservations' / 'cancel reservation' intent.
+    """
+    q = msg_text.lower().strip()
+
+    # ── Cancel a specific reservation ─────────────────────────
+    cancel_match = re.search(r'cancel.*?#?([a-f0-9]{6,24})', q, re.IGNORECASE)
+    if cancel_match:
+        rid_fragment = cancel_match.group(1)
+        from database import reservations_col, _str_id
+        if reservations_col:
+            # Try to find by last-6 of ID
+            all_user_res = [_str_id(d) for d in reservations_col.find({"user_id": from_number})]
+            matched = next(
+                (r for r in all_user_res if str(r.get("_id", "")).endswith(rid_fragment)),
+                None,
+            )
+            if matched:
+                success = cancel_reservation_by_user(from_number, matched["_id"])
+                if success:
+                    ok = {
+                        "en": f"✅ Reservation *#{rid_fragment}* has been cancelled. See you next time! 😊",
+                        "ur": f"✅ ریزرویشن *#{rid_fragment}* منسوخ ہوگئی۔ اگلی بار ملیں گے! 😊",
+                        "de": f"✅ Reservierung *#{rid_fragment}* wurde storniert. Bis zum nächsten Mal! 😊",
+                    }
+                    await send_whatsapp_text(from_number, ok.get(lang, ok["en"]))
+                    return
+                else:
+                    fail = {
+                        "en": "⚠️ Could not cancel that reservation — it may already be cancelled or completed.",
+                        "ur": "⚠️ یہ ریزرویشن منسوخ نہیں ہوسکی — شاید پہلے ہی منسوخ یا مکمل ہوچکی ہے۔",
+                        "de": "⚠️ Diese Reservierung konnte nicht storniert werden.",
+                    }
+                    await send_whatsapp_text(from_number, fail.get(lang, fail["en"]))
+                    return
+
+    # ── Show list of reservations ──────────────────────────────
+    reservations = get_reservations_by_user(from_number, limit=5)
+
+    if not reservations:
+        no_res = {
+            "en": (
+                "📋 You don't have any reservations yet!\n\n"
+                "Type *book a table* to make one. 🪑"
+            ),
+            "ur": "📋 ابھی کوئی ریزرویشن نہیں ہے!\n\n*میز بک کریں* لکھ کر بک کریں۔ 🪑",
+            "de": "📋 Sie haben noch keine Reservierungen!\n\nTippen Sie *Tisch reservieren*. 🪑",
+        }
+        await send_whatsapp_buttons(
+            from_number,
+            no_res.get(lang, no_res["en"]),
+            ["🪑 Book A Table", "View Menu 📋", "Place Order 🛒"],
+        )
+        return
+
+    header = {
+        "en": "🪑 *Your Reservations:*\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        "ur": "🪑 *آپ کی ریزرویشنز:*\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        "de": "🪑 *Ihre Reservierungen:*\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+    }
+    lines = [header.get(lang, header["en"])]
+
+    status_emoji = {
+        "Pending":   "⏳", "Confirmed": "✅",
+        "Cancelled": "❌", "Completed": "🎉", "No Show": "🚫",
+    }
+
+    for res in reservations:
+        rid    = str(res.get("_id", ""))[-6:]
+        date   = res.get("date", "—")
+        time_  = res.get("time_slot", "—")
+        guests = res.get("guests", "—")
+        status = res.get("status", "Pending")
+        emoji  = status_emoji.get(status, "📋")
+        lines.append(
+            f"{emoji} *#{rid}* — {date} at {time_} — {guests} guests — _{status}_"
+        )
+
+    cancel_hint = {
+        "en": "\n\nTo cancel one, type: *cancel #[ref]*\nE.g. _cancel #abc123_",
+        "ur": "\n\nمنسوخ کرنے کے لیے: *cancel #[نمبر]* لکھیں",
+        "de": "\n\nZum Stornieren: *cancel #[Ref]* eingeben",
+    }
+    lines.append(cancel_hint.get(lang, cancel_hint["en"]))
+
+    await send_whatsapp_buttons(
+        from_number,
+        "\n".join(lines),
+        ["🪑 Book A Table", "View Menu 📋", "Place Order 🛒"],
+    )
