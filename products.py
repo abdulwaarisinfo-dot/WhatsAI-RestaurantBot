@@ -1,5 +1,6 @@
 """
 products.py — Product helpers, cart building, menu display, multi-item parsing
+WhatsApp AI Restaurant Bot v14.7 + Table Reservations
 """
 
 import re
@@ -9,7 +10,7 @@ from difflib import SequenceMatcher
 
 import config
 
-logger = logging.getLogger("RestaurantBot.v14.6")
+logger = logging.getLogger("RestaurantBot.v14.7")
 
 # ============================================================
 # SIZE / VARIANT HELPERS
@@ -422,7 +423,6 @@ def _build_cart_summary(
 
 
 def _build_full_example_menu(lang: str = "en") -> str:
-    """Build a complete, human-readable example menu."""
     header_map = {
         "en": (
             "🍽️ *Our Full Menu*\n"
@@ -484,7 +484,6 @@ def _build_full_example_menu(lang: str = "en") -> str:
 
 
 def _build_text_menu(products: List[Dict], lang: str = "en", title: str = "") -> str:
-    """Build a beautifully formatted text menu grouped by category."""
     if not products:
         return _build_full_example_menu(lang)
 
