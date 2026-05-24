@@ -1,6 +1,6 @@
 """
 main.py — FastAPI application, webhook handler, CRM/admin panel, and all REST APIs
-WhatsApp AI Restaurant Bot v14.7
+WhatsApp AI Restaurant Bot v14.7 + Table Reservations
 """
 
 import re
@@ -19,9 +19,16 @@ from bson import ObjectId
 import config
 from database import (
     products_col, meta_col, analytics_col, orders_col, carts_col,
+    reservations_col,
     load_data_realtime, init_analytics, _track, _str_id, _parse_json_field,
     calculate_delivery_charge, _delivery_charge_info_text,
     create_order_from_cart, get_delivery_time,
+    # reservation CRUD
+    create_reservation, get_reservation, get_reservations_by_user,
+    get_all_reservations, update_reservation, update_reservation_status,
+    delete_reservation, cancel_reservation_by_user,
+    get_latest_active_reservation, check_slot_availability,
+    get_reservation_stats,
 )
 from sessions import (
     get_user_session, reset_cart_only, reset_for_new_order,
@@ -29,6 +36,8 @@ from sessions import (
     _is_same_address_request, _is_valid_address, extract_address,
     get_faq_response, get_suggestions,
     _is_pure_greeting, _is_order_now_button, _is_post_order_small_talk,
+    _is_reservation_intent, _is_my_reservations_intent,
+    reset_reservation_flow,
 )
 from products import (
     _recalc_cart, _build_cart_summary, build_cart_item,
@@ -42,11 +51,14 @@ from whatsapp import (
     send_whatsapp_text, send_whatsapp_buttons,
     _ask_size, _ask_spice, _ask_extras, _ask_multi_spice,
     _smart_fallback,
+    send_reservation_status_update,
 )
 from bot_flow import (
     _advance_product_queue, _finalise_single_item,
     _handle_single_item_order, _handle_full_price_display,
     handle_multi_item_order,
+    handle_reservation_start, handle_reservation_flow,
+    handle_my_reservations,
 )
 
 logger = logging.getLogger("RestaurantBot.v14.7")
@@ -142,6 +154,15 @@ async def receive_message(request: Request):
         step    = session.get("step", 0)
 
         _track({"total_searches": 1, f"supported_languages.{lang}": 1})
+
+        # ═══════════════════════════════════════════════════════
+        # RESERVATION FLOW — handle active reservation steps first
+        # (steps are negative integers: -1 through -6)
+        # ═══════════════════════════════════════════════════════
+        if step < 0:
+            handled = await handle_reservation_flow(from_num, msg_text, lang, session)
+            if handled:
+                return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
         # PRIORITY 0 — "new order" → reset cart immediately
@@ -251,6 +272,20 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"})
 
         # ═══════════════════════════════════════════════════════
+        # RESERVATION INTENTS (step 0 only)
+        # ═══════════════════════════════════════════════════════
+
+        # "book a table" / "reserve" → start reservation flow
+        if _is_reservation_intent(q) and step == 0:
+            await handle_reservation_start(from_num, session, lang)
+            return JSONResponse({"status": "ok"})
+
+        # "my reservations" / "cancel reservation #xxx"
+        if _is_my_reservations_intent(q):
+            await handle_my_reservations(from_num, msg_text, lang, session)
+            return JSONResponse({"status": "ok"})
+
+        # ═══════════════════════════════════════════════════════
         # Post-order small talk guard
         # ═══════════════════════════════════════════════════════
         if _is_post_order_small_talk(q, session):
@@ -286,11 +321,12 @@ async def receive_message(request: Request):
                 "en": (
                     "You're so welcome — it's truly my pleasure! 😊\n\n"
                     "• *Show menu* — browse all our dishes\n"
-                    "• *Place order* — order your favourite food\n\n"
+                    "• *Place order* — order your favourite food\n"
+                    "• *Book a table* — reserve a table for dine-in 🪑\n\n"
                     "Anything else I can do for you? 🍽️"
                 ),
-                "ur": "خوشی ہوئی! 😊 اور کچھ چاہیے؟\n\n• *مینو دکھائیں*\n• *آرڈر دیں*",
-                "de": "Gern geschehen! 😊 Kann ich noch helfen?\n\n• *Menü anzeigen*\n• *Bestellen*",
+                "ur": "خوشی ہوئی! 😊 اور کچھ چاہیے؟\n\n• *مینو دکھائیں*\n• *آرڈر دیں*\n• *میز بک کریں* 🪑",
+                "de": "Gern geschehen! 😊 Kann ich noch helfen?\n\n• *Menü anzeigen*\n• *Bestellen*\n• *Tisch reservieren* 🪑",
             }
             await send_whatsapp_text(from_num, thanks_msg.get(lang, thanks_msg["en"]))
             return JSONResponse({"status": "ok"})
@@ -365,7 +401,6 @@ async def receive_message(request: Request):
             po["size"]  = matched["size"]
             po["price"] = matched["price"]
 
-            # Extract and store quantity from the size response
             extracted_qty = _extract_qty_from_size_response(msg_text)
             if extracted_qty > 1:
                 po["qty"] = extracted_qty
@@ -443,11 +478,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 3 — EXTRAS
-        # FIX: Apply extras only to items that match the size the
-        # user explicitly named (e.g. "1 XL pizza add Double toppings
-        # and other's for not be" → only XL gets Double Toppings).
-        # If no size is specified in the extras reply, apply to all
-        # items of that product (original behaviour, no regression).
         # ═══════════════════════════════════════════════════════
         if step == 3:
             po             = session.get("pending_order", {})
@@ -475,13 +505,8 @@ async def receive_message(request: Request):
 
             extras_price = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen)
 
-            # ── v14.7 FIX A: detect which size the extras should apply to ──
-            # Parse the size mentioned in this extras-reply message.
-            # e.g. "1 XL pizza add Double toppings" → targeted_size = "xl"
-            # If none found, targeted_size stays "" and we apply to all
-            # items of this product (original behaviour, no regression).
-            product_ref     = po.get("product_ref", {})
-            targeted_size   = ""
+            product_ref   = po.get("product_ref", {})
+            targeted_size = ""
             if product_ref:
                 for v in product_ref.get("variants", []):
                     v_size = v.get("size", "").lower()
@@ -489,15 +514,11 @@ async def receive_message(request: Request):
                         targeted_size = v_size
                         break
 
-            # Determine the qty hint from the extras message so we can
-            # disambiguate when multiple same-size items are in cart.
             targeted_qty = _extract_qty_from_size_response(msg_text)
 
             po["extras"] = chosen
             po["price"]  = po.get("price", 0) + extras_price
 
-            # If this is a simple single-item flow (no multi-item cart yet),
-            # use the standard finalise path.
             if not session.get("cart"):
                 cart_item = build_cart_item(
                     po.get("product_ref", {}),
@@ -507,13 +528,10 @@ async def receive_message(request: Request):
                 await _finalise_single_item(from_num, session, cart_item, lang)
                 return JSONResponse({"status": "ok"})
 
-            # Multi-item cart path: apply extras selectively.
             current_product_id = str(product_ref.get("_id", "")) if product_ref else ""
             cart_items         = session.get("cart", [])
 
             if chosen:
-                # Walk the cart and apply extras only to matching items.
-                # "Matching" means: same product AND (same size if targeted).
                 applied = 0
                 for item in cart_items:
                     is_same_product = (item.get("product_id") == current_product_id)
@@ -521,19 +539,14 @@ async def receive_message(request: Request):
                         continue
                     if targeted_size and item.get("size", "").lower() != targeted_size:
                         continue
-                    # Apply extras price to each matched item.
                     item["extras"]           = chosen
                     item["extras_price"]     = extras_price
                     item["total_item_price"] = (item["base_price"] + extras_price) * item["quantity"]
                     applied += 1
-                    # If the user specified a count (e.g. "1 XL"),
-                    # stop after applying to that many items.
                     if targeted_qty > 0 and applied >= targeted_qty:
                         break
 
             session["cart"] = cart_items
-
-            # Move to cart confirmation
             session["step"] = 5
             total   = _recalc_cart(cart_items)
             summary = _build_cart_summary(cart_items, total, lang)
@@ -984,8 +997,6 @@ async def receive_message(request: Request):
 
         # ═══════════════════════════════════════════════════════
         # STEP 30 — Multi-size EXTRAS
-        # FIX: Apply extras selectively by size + qty hint,
-        # same logic as STEP 3 multi-item path.
         # ═══════════════════════════════════════════════════════
         if step == 30:
             product        = session.get("pending_order", {}).get("product_ref", {})
@@ -1000,7 +1011,6 @@ async def receive_message(request: Request):
 
             extras_price = sum(e["price"] for e in extras_options if e["name"].strip().title() in chosen)
 
-            # ── v14.7 FIX B: selective extras by size + qty hint ──
             current_product_id = str(product.get("_id", "")) if product else ""
             targeted_size      = ""
             if product:
@@ -1207,23 +1217,12 @@ async def receive_message(request: Request):
             handled = await _handle_single_item_order(from_num, msg_text, lang)
 
             # ── v14.7 FIX: pre-fill size/qty if already stated ──────────
-            # When the user includes the size (and optionally qty) in their
-            # order message — e.g. "Add 5 XL Pizza" — _handle_single_item_order
-            # parks at step 1 awaiting size confirmation. If we can already
-            # match a variant from the original message, advance the flow
-            # immediately WITHOUT sending a second size-prompt message.
-            # The guard `session.get("step") == 1` ensures we only attempt
-            # this fast-path when the handler genuinely stopped at step 1;
-            # if the handler already progressed past step 1 (e.g. it sent
-            # a spice question itself) we do nothing here and avoid a
-            # duplicate prompt.
             if handled and session.get("step") == 1:
                 po       = session.get("pending_order", {})
                 variants = po.get("variants", [])
                 if variants:
                     pre_matched = _match_variant(variants, msg_text)
                     if pre_matched:
-                        # Commit size + qty into pending_order
                         po["size"]  = pre_matched["size"]
                         po["price"] = pre_matched["price"]
                         pre_qty = _extract_qty_from_size_response(msg_text)
@@ -1234,7 +1233,6 @@ async def receive_message(request: Request):
 
                         spice_levels = po.get("spice_levels", [])
                         if spice_levels:
-                            # Advance to spice step — send ONE spice prompt
                             session["step"] = 2
                             product_ref = po.get("product_ref", {
                                 "title": po.get("dish", ""),
@@ -1267,7 +1265,6 @@ async def receive_message(request: Request):
                                         "de": "📍 Fast geschafft! Lieferadresse angeben:",
                                     }
                                     await send_whatsapp_text(from_num, ask_addr.get(lang, ask_addr["en"]))
-            # ── end v14.7 FIX ────────────────────────────────────────────
 
             if handled:
                 return JSONResponse({"status": "ok"})
@@ -1386,7 +1383,7 @@ async def receive_message(request: Request):
             await send_whatsapp_buttons(
                 from_num,
                 reply,
-                ["View Menu 📋", "Place Order 🛒", "Contact Us 📞"],
+                ["View Menu 📋", "Place Order 🛒", "🪑 Book A Table"],
             )
             return JSONResponse({"status": "ok"})
 
@@ -1434,7 +1431,7 @@ async def receive_message(request: Request):
                 )
             return JSONResponse({"status": "ok"})
 
-        # ── Smart AI-powered fallback ───────────────────────────
+        # ── Smart AI-powered fallback ──────────────────────────
         smart_reply = await _smart_fallback(from_num, msg_text, lang)
         await send_whatsapp_text(from_num, smart_reply)
         return JSONResponse({"status": "ok"})
@@ -1708,6 +1705,193 @@ async def update_order_status(order_id: str, request: Request):
 
 
 # ============================================================
+# TABLE RESERVATIONS API  (full CRUD)
+# ============================================================
+
+@app.get("/api/reservations")
+async def api_get_reservations(
+    status: Optional[str] = None,
+    date:   Optional[str] = None,
+    limit:  int           = 100,
+):
+    """
+    List reservations. Optionally filter by status and/or date (YYYY-MM-DD).
+    Also returns today's count and status breakdown for the dashboard.
+    """
+    reservations = get_all_reservations(status=status, date=date, limit=limit)
+    stats        = get_reservation_stats()
+    return {"reservations": reservations, "stats": stats}
+
+
+@app.get("/api/reservations/stats")
+async def api_reservation_stats():
+    """Aggregated reservation stats for the analytics widget."""
+    return get_reservation_stats()
+
+
+@app.get("/api/reservations/{reservation_id}")
+async def api_get_reservation(reservation_id: str):
+    """Fetch a single reservation by ID."""
+    res = get_reservation(reservation_id)
+    if not res:
+        return JSONResponse({"message": "Reservation not found"}, status_code=404)
+    return JSONResponse(res)
+
+
+@app.post("/api/reservations")
+async def api_create_reservation(request: Request):
+    """
+    Admin-side reservation creation.
+    Body: { user_id, name, date, time_slot, guests, notes? }
+    """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    required = ["user_id", "name", "date", "time_slot", "guests"]
+    missing  = [f for f in required if not body.get(f)]
+    if missing:
+        return JSONResponse({"message": f"Missing fields: {missing}"}, status_code=400)
+
+    try:
+        guests = int(body["guests"])
+    except (ValueError, TypeError):
+        return JSONResponse({"message": "guests must be an integer"}, status_code=400)
+
+    if guests < 1 or guests > config.RESERVATION_MAX_GUESTS:
+        return JSONResponse(
+            {"message": f"guests must be between 1 and {config.RESERVATION_MAX_GUESTS}"},
+            status_code=400,
+        )
+
+    reservation_id = create_reservation(
+        user_id   = str(body["user_id"]),
+        name      = str(body["name"]),
+        date      = str(body["date"]),
+        time_slot = str(body["time_slot"]),
+        guests    = guests,
+        notes     = str(body.get("notes", "")),
+    )
+    if reservation_id == "db_error":
+        return JSONResponse({"message": "Database error"}, status_code=500)
+
+    return JSONResponse({
+        "message":        "Reservation created!",
+        "status":         "success",
+        "reservation_id": reservation_id,
+    })
+
+
+@app.put("/api/reservations/{reservation_id}")
+async def api_update_reservation(reservation_id: str, request: Request):
+    """
+    Update any fields of a reservation (admin).
+    Body: any subset of { name, date, time_slot, guests, notes, status }
+    """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    allowed = {"name", "date", "time_slot", "guests", "notes", "status"}
+    fields  = {k: v for k, v in body.items() if k in allowed}
+
+    if not fields:
+        return JSONResponse({"message": f"Provide at least one of: {allowed}"}, status_code=400)
+
+    if "guests" in fields:
+        try:
+            fields["guests"] = int(fields["guests"])
+        except (ValueError, TypeError):
+            return JSONResponse({"message": "guests must be an integer"}, status_code=400)
+
+    if "status" in fields and fields["status"] not in config.RESERVATION_STATUSES:
+        return JSONResponse(
+            {"message": f"Invalid status. Use: {config.RESERVATION_STATUSES}"},
+            status_code=400,
+        )
+
+    success = update_reservation(reservation_id, fields)
+    if not success:
+        return JSONResponse({"message": "Reservation not found or update failed"}, status_code=404)
+
+    # If status changed, notify the user via WhatsApp
+    if "status" in fields and reservations_col:
+        res = get_reservation(reservation_id)
+        if res:
+            asyncio.create_task(
+                send_reservation_status_update(res["user_id"], res, fields["status"], "en")
+            )
+
+    return JSONResponse({"message": "Reservation updated!", "status": "success"})
+
+
+@app.patch("/api/reservations/{reservation_id}/status")
+async def api_update_reservation_status(reservation_id: str, request: Request):
+    """
+    Shorthand endpoint to update only the status of a reservation.
+    Body: { "status": "Confirmed" }
+    Sends a WhatsApp notification to the customer.
+    """
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"message": "Invalid JSON body"}, status_code=400)
+
+    new_status = body.get("status")
+    if new_status not in config.RESERVATION_STATUSES:
+        return JSONResponse(
+            {"message": f"Invalid status. Use: {config.RESERVATION_STATUSES}"},
+            status_code=400,
+        )
+
+    success = update_reservation_status(reservation_id, new_status)
+    if not success:
+        return JSONResponse({"message": "Reservation not found"}, status_code=404)
+
+    # Notify customer
+    res = get_reservation(reservation_id)
+    if res:
+        asyncio.create_task(
+            send_reservation_status_update(res["user_id"], res, new_status, "en")
+        )
+
+    return JSONResponse({"message": f"Status updated to {new_status}", "status": "success"})
+
+
+@app.delete("/api/reservations/{reservation_id}")
+async def api_delete_reservation(reservation_id: str):
+    """Hard-delete a reservation (admin only)."""
+    if reservations_col is None:
+        return JSONResponse({"message": "DB not connected"}, status_code=500)
+    success = delete_reservation(reservation_id)
+    if not success:
+        return JSONResponse({"message": "Reservation not found"}, status_code=404)
+    return JSONResponse({"message": "Reservation deleted!", "status": "success"})
+
+
+@app.get("/api/reservations/user/{user_id}")
+async def api_get_user_reservations(user_id: str, limit: int = 10):
+    """Fetch all reservations for a specific WhatsApp user (for CRM lookup)."""
+    reservations = get_reservations_by_user(user_id, limit=limit)
+    return {"reservations": reservations, "count": len(reservations)}
+
+
+@app.get("/api/reservations/availability/{date}/{time_slot}")
+async def api_check_availability(date: str, time_slot: str):
+    """Check if a date+time slot is available. Returns { available: bool }."""
+    available = check_slot_availability(date, time_slot)
+    return {"date": date, "time_slot": time_slot, "available": available}
+
+
+# ============================================================
 # FAQ API
 # ============================================================
 
@@ -1861,7 +2045,10 @@ async def get_analytics():
     if analytics_col is None:
         return {}
     data = analytics_col.find_one({"type": "analytics"}) or {}
-    return _str_id(data)
+    res_stats = get_reservation_stats()
+    result = _str_id(data)
+    result["reservation_stats"] = res_stats
+    return result
 
 
 @app.post("/track_click")
@@ -1896,16 +2083,21 @@ async def track_spice(spice: str = Form(...)):
 async def get_api_data():
     load_data_realtime()
     try:
-        orders    = []
-        analytics = {}
+        orders       = []
+        analytics    = {}
+        reservations = []
         if orders_col is not None:
             orders = [_str_id(o) for o in orders_col.find({}).sort("timestamp", DESCENDING).limit(50)]
         if analytics_col is not None:
             analytics = _str_id(analytics_col.find_one({"type": "analytics"}) or {})
+        reservations = get_all_reservations(limit=50)
+        res_stats    = get_reservation_stats()
         return {
-            "products":  config.PRODUCTS_DATA,
-            "orders":    orders,
-            "analytics": analytics,
+            "products":     config.PRODUCTS_DATA,
+            "orders":       orders,
+            "analytics":    analytics,
+            "reservations": reservations,
+            "reservation_stats": res_stats,
             "config": {
                 "faq":                 config.BOT_DATA.get("faq", {}),
                 "initial_message":     config.BOT_DATA.get("initial_message", {}),
@@ -1917,7 +2109,7 @@ async def get_api_data():
         }
     except Exception as e:
         logger.error(f"API data error: {e}")
-        return {"products": [], "orders": [], "analytics": {}, "config": {}}
+        return {"products": [], "orders": [], "analytics": {}, "reservations": [], "config": {}}
 
 
 # ============================================================
@@ -1928,7 +2120,7 @@ async def get_api_data():
 async def startup_event():
     load_data_realtime()
     init_analytics()
-    logger.info("🚀 Restaurant Bot v14.7 started!")
+    logger.info("🚀 Restaurant Bot v14.7 + Table Reservations started!")
     logger.info(f"   Products loaded    : {len(config.PRODUCTS_DATA)}")
     logger.info(f"   Keyword index size : {len(config.PRODUCT_KEYWORD_INDEX)}")
     logger.info(f"   FAQ keys           : {list(config.BOT_DATA.get('faq', {}).keys())}")
@@ -1936,4 +2128,5 @@ async def startup_event():
     logger.info(f"   Delivery charges   : {config.BOT_DATA.get('delivery_charges', {})}")
     logger.info(f"   WhatsApp connected : {'✅' if config.WHATSAPP_TOKEN else '❌'}")
     logger.info(f"   MongoDB connected  : {'✅' if products_col is not None else '❌'}")
+    logger.info(f"   Reservations col   : {'✅' if reservations_col is not None else '❌'}")
     logger.info(f"   AI fallback        : {'✅' if config.ANTHROPIC_API_KEY else '⚠️  Static fallback active'}")
